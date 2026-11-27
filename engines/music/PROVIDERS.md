@@ -14,12 +14,12 @@
 - Official source pinned: https://github.com/ace-step/ACE-Step-1.5/commit/ca1e85fe9430179831e6bc6be790c332190a3866 ; latest release endpoint returned v0.1.8 when inspected (release: https://github.com/ace-step/ACE-Step-1.5/releases/tag/v0.1.8). Code pin is main commit, not a claim that this is that tag.
 - Model: https://huggingface.co/ACE-Step/Ace-Step1.5/tree/eb84216a8ece2d56388e401efc28061a0c30a209/acestep-v15-turbo (MIT, decoder folder 4.79 GB). Pin entire snapshot; lock any separate LM, VAE, code and environment dependencies before production.
 - https://ace-step.github.io/ACE-Step-1.5/en/API documents release_task, query_result, audio, model inventory, seed and batch. https://github.com/ace-step/ACE-Step-1.5/blob/main/docs/en/INFERENCE.md describes instrumental lyric marker. https://github.com/ace-step/ACE-Step-1.5/blob/main/docs/en/GRADIO_GUIDE.md describes hardware-dependent LM selection.
-- Vendor reports consumer GPU support starting around 4 GB VRAM; not a guarantee for full LM, 120s, or XL. Start test on 24 GB CUDA GPU (e.g. RTX 4090/L4), batch 1; measure memory and latency. XL and larger LM require separate capacity tests. No vendor speed number is treated as measured Synora result. Hindi listed in official musician guide; Telugu quality/availability unverified at exact pin.
+- Vendor reports consumer GPU support starting around 4 GB VRAM; not a guarantee for full LM, 120s, or XL. Start test on 24 GB CUDA GPU (e.g. RTX 4090/L4), batch 1; measure memory and latency. XL and larger LM require separate capacity tests. No vendor speed number is treated as measured Synora result. Pinned code constants explicitly list en, hi and te: https://github.com/ace-step/ACE-Step-1.5/blob/ca1e85fe9430179831e6bc6be790c332190a3866/acestep/constants.py . Accepted language code is not proof of pronunciation or lyric fidelity.
 - No unofficial Suno API or artist voice cloning. Rights to user lyrics/audio and explicit consent must be enforced upstream.
 
 ## Other sources
 
-- https://ai.google.dev/gemini-api/docs/music-generation and https://ai.google.dev/gemini-api/docs/pricing ; https://ai.google.dev/gemini-api/terms (review paid-service data handling and product redistribution before launch).
+- https://ai.google.dev/gemini-api/docs/music-generation and https://ai.google.dev/gemini-api/docs/pricing ; https://ai.google.dev/gemini-api/terms (effective March 23 2026: requires adult-directed API clients, supported regions, no competing model development, and paid services for EEA/UK/Switzerland; review product eligibility and paid-service data handling before launch).
 - https://elevenlabs.io/docs/overview/capabilities/music ; https://elevenlabs.io/docs/api-reference/music/compose ; https://elevenlabs.io/music-terms
 - https://facebookresearch.github.io/audiocraft/model_cards/MUSICGEN_MODEL_CARD.html
 - https://huggingface.co/stabilityai/stable-audio-open-1.0 and https://stability.ai/license

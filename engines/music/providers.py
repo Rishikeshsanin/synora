@@ -16,6 +16,7 @@ from .audio import inspect_audio, MAX_AUDIO_BYTES
 
 ACE_REVISION = "eb84216a8ece2d56388e401efc28061a0c30a209"
 ACE_CODE = "ca1e85fe9430179831e6bc6be790c332190a3866"
+ACE_LANGUAGES = frozenset("ar az bg bn ca cs da de el en es fa fi fr he hi hr ht hu id is it ja ko la lt ms ne nl no pa pl pt ro ru sa sk sr sv sw ta te th tl tr uk ur vi yue zh unknown".split())
 LYRIA_REVISION = "2026-05-20"  # API revision, not an immutable weights revision.
 
 class NoRedirect(HTTPRedirectHandler):
@@ -49,9 +50,11 @@ def decode_json(raw):
     except (ValueError, UnicodeError):
         raise MusicError("invalid provider JSON") from None
 
-def result(path, cap, ctx, cost, provenance):
+def result(path, cap, ctx, cost, provenance, expected_mime=None):
     try:
         metrics = inspect_audio(path, min(60, ctx.remaining()))
+        if expected_mime and metrics["mime_type"] != expected_mime:
+            raise MusicError("provider returned unexpected audio format")
         ctx.remaining()
         ctx.progress(100)
         return MusicOutput(path, cap.provider, cap.model, cap.revision, metrics["duration_seconds"],
@@ -130,9 +133,13 @@ class AceStepProvider:
     def generate(self, spec, context):
         cap = self.capabilities
         cap.validate(spec)
+        lang = {"english":"en","hindi":"hi","telugu":"te"}.get((spec.language or "").lower(), (spec.language or "unknown").lower())
+        if spec.mode == "vocals" and lang not in ACE_LANGUAGES:
+            raise MusicError("ACE vocal language unsupported")
+        if spec.mode == "instrumental":
+            lang = "unknown"
         context.authorize(cap, self.cost)
         context.progress(1)
-        lang = {"english":"en","hindi":"hi","telugu":"te"}.get((spec.language or "").lower(), spec.language or "unknown")
         payload = dict(model=cap.model, prompt=spec.caption(), lyrics="[Instrumental]" if spec.mode=="instrumental" else spec.lyrics or "",
                        audio_duration=spec.duration_seconds, vocal_language=lang, audio_format="wav", batch_size=1,
                        thinking=False, use_format=False, sample_mode=False, use_random_seed=False, seed=context.seed, inference_steps=8)
@@ -169,7 +176,7 @@ class AceStepProvider:
                 path = save(context,"ace.wav",audio)
                 return result(path,cap,context,self.cost,{"upstream_job_id":task_id,"seed":context.seed,
                     "configured_weights_revision":ACE_REVISION,"configured_code_revision":ACE_CODE,
-                    "revision_verified_by_api":False,"lm_model":track.get("lm_model"),"cost_is_reservation_estimate":True})
+                    "revision_verified_by_api":False,"lm_model":track.get("lm_model"),"cost_is_reservation_estimate":True}, expected_mime="audio/wav")
             if row.get("status")!=0:
                 raise MusicError("unknown ACE task status")
             time.sleep(min(2, context.remaining()))
@@ -210,7 +217,7 @@ class LyriaProvider:
         context.progress(85)
         path=save(context,"lyria.mp3",audio)
         return result(path,cap,context,self.cost,{"api_revision":LYRIA_REVISION,"seed_supported":False,
-            "upstream_job_id":body.get("id"),"estimated_list_price":True})
+            "upstream_job_id":body.get("id"),"estimated_list_price":True}, expected_mime="audio/mpeg")
 
 def registry(env=None):
     """Availability reflects config, not a health probe or legal approval."""

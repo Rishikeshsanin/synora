@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 from engines.music import (MusicSpec, GenerationContext, FixtureProvider, AceStepProvider,
                            LyriaProvider, MusicError, registry)
-from engines.music.audio import inspect_audio, master
+from engines.music.audio import inspect_audio, master, run
 
 def envelope(data):
     return json.dumps({"code":200,"error":None,"data":data}).encode()
@@ -101,19 +101,31 @@ class EngineTests(unittest.TestCase):
                     self.spec,self.ctx("ace",allow_real=True,budget_usd=0.1))
 
     def test_lyria_protocol(self):
-        # Mock response containing actual local fixture WAV bytes; not AI music.
-        wav=FixtureProvider().generate(self.spec,self.ctx("fixture")).artifact.read_bytes()
+        # Mock response containing locally encoded MP3 fixture; not AI music.
+        wav=FixtureProvider().generate(self.spec,self.ctx("fixture")).artifact
+        mp3=self.root/"fixture.mp3"
+        run(["ffmpeg","-nostdin","-v","error","-i",str(wav),str(mp3)])
+        encoded=mp3.read_bytes()
         def transport(url, headers, payload, timeout, limit):
             self.assertEqual(payload["model"],"lyria-3.5")
             self.assertIn("Target duration: 15",payload["input"])
             self.assertIn("Api-Revision",headers)
             return json.dumps({"steps":[{"type":"model_output","content":[
-                {"type":"audio","data":base64.b64encode(wav).decode()}]}]}).encode()
+                {"type":"audio","data":base64.b64encode(encoded).decode()}]}]}).encode()
         out=LyriaProvider("test",transport=transport).generate(
             self.spec,self.ctx("lyria",allow_real=True,budget_usd=0.08))
-        self.assertEqual(out.actual_duration_seconds,15)
+        self.assertAlmostEqual(out.actual_duration_seconds,15,delta=0.15)
+        self.assertEqual(out.mime_type,"audio/mpeg")
         self.assertEqual(out.estimated_cost_usd,0.08)
         self.assertFalse(out.provenance["seed_supported"])
+
+    def test_ace_language_rejection_before_network(self):
+        def forbidden(*args):
+            self.fail("network must not be invoked")
+        provider=AceStepProvider("http://localhost:8001","test",0.1,forbidden)
+        with self.assertRaises(MusicError):
+            provider.generate(MusicSpec("song",mode="vocals",language="unsupported"),
+                              self.ctx("a",allow_real=True,budget_usd=0.1))
 
     def test_audio_invalid_and_master(self):
         bad=self.root/"bad.wav"
