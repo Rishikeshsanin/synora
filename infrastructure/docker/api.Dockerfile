@@ -1,7 +1,8 @@
 FROM python:3.12-slim AS build
 WORKDIR /build
 COPY apps/api/requirements.lock .
-RUN python -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir --require-hashes -r requirements.lock
+COPY infrastructure/ci/pip.lock .
+RUN python -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir --require-hashes -r pip.lock && /opt/venv/bin/pip install --no-cache-dir --require-hashes -r requirements.lock
 FROM python:3.12-slim
 ENV PATH="/opt/venv/bin:$PATH" PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
