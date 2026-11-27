@@ -1,0 +1,94 @@
+name: Synora CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: synora-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  foundation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Infrastructure tests
+        run: python3 -m unittest discover -s infrastructure/tests -v
+      - name: Compose validation
+        env:
+          SYNORA_LOCAL_DB_PASSWORD: local-validation-only
+        run: docker compose -f infrastructure/compose.yaml config --quiet
+      - name: Scan Git history for secrets (redacted)
+        run: docker run --rm -v "$PWD:/repo:ro" ghcr.io/gitleaks/gitleaks:v8.24.3 git /repo --redact --no-banner
+  web:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Web checks
+        run: |
+          set -euo pipefail
+          if [ ! -d apps/web ]; then
+            echo "::notice::Foundation only: apps/web absent; web checks NOT executed."
+            echo "Web: NOT EXECUTED (application absent)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          cd apps/web
+          test -f package.json && test -f package-lock.json
+          npm ci --ignore-scripts
+          npm audit --audit-level=high
+          npm run lint
+          npm run typecheck
+          npm test
+          npm run build
+  python:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Python checks
+        run: |
+          set -euo pipefail
+          python3 --version
+          python3 -m venv "$RUNNER_TEMP/synora-ci"
+          source "$RUNNER_TEMP/synora-ci/bin/activate"
+          for component in apps/api engines/music engines/media engines/creative; do
+            if [ ! -d "$component" ]; then
+              echo "::notice::Foundation only: $component absent; checks NOT executed."
+              echo "$component: NOT EXECUTED (component absent)" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+            (
+              cd "$component"
+              test -f requirements-dev.lock
+              python3 -m venv "$RUNNER_TEMP/synora-$(echo "$component" | tr / -)"
+              source "$RUNNER_TEMP/synora-$(echo "$component" | tr / -)/bin/activate"
+              python -m pip install --require-hashes -r requirements-dev.lock
+              python -m pip check
+              python -m pip_audit --strict
+              python -m ruff check .
+              python -m mypy .
+              python -m pytest
+            )
+          done
+      - name: API container build
+        run: |
+          set -euo pipefail
+          if [ -d apps/api ]; then
+            docker build -f infrastructure/docker/api.Dockerfile -t synora-api:ci apps/api
+          else
+            echo "::notice::API container build NOT executed (API absent)."
+          fi
