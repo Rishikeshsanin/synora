@@ -7,7 +7,7 @@ services:
     branch: main
     autoDeployTrigger: off
     dockerfilePath: ./infrastructure/docker/api.Dockerfile
-    dockerContext: ./apps/api
+    dockerContext: .
     healthCheckPath: /ready
     envVars:
       - key: SYNORA_ENV

@@ -1,7 +1,13 @@
 **
-!app/
-!app/**
-!requirements.lock
+!apps/
+!apps/api/
+!apps/api/synora/
+!apps/api/synora/**
+!apps/api/requirements.lock
+!engines/
+!engines/music/
+!engines/music/**
+engines/music/tests/
 **/.env
 **/.env.*
 **/*.pem

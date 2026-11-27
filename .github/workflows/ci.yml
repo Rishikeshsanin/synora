@@ -2,7 +2,7 @@ name: Synora CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, integration/m1-foundation]
   workflow_dispatch:
 permissions:
   contents: read
@@ -18,8 +18,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: Infrastructure tests
-        run: python3 -m unittest discover -s infrastructure/tests -v
+      - run: python3 -m unittest discover -s infrastructure/tests -v
       - name: Compose validation
         env:
           SYNORA_LOCAL_DB_PASSWORD: local-validation-only
@@ -29,6 +28,9 @@ jobs:
   web:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/web
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -36,59 +38,173 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
-      - name: Web checks
+      - name: Locked dependencies
         run: |
-          set -euo pipefail
-          if [ ! -d apps/web ]; then
-            echo "::notice::Foundation only: apps/web absent; web checks NOT executed."
-            echo "Web: NOT EXECUTED (application absent)" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          cd apps/web
-          test -f package.json && test -f package-lock.json
+          test -f package-lock.json || { echo "::error::Frontend owner must commit package-lock.json"; exit 1; }
           npm ci --ignore-scripts
-          npm audit --audit-level=high
-          npm run lint
-          npm run typecheck
-          npm test
-          npm run build
-  python:
+      - run: npm audit --audit-level=high
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+  rls:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Disposable PostgreSQL migration and RLS
+        run: |
+          bash infrastructure/ci/start-db.sh
+          bash infrastructure/ci/psql.sh < apps/api/tests/rls_smoke.sql
+      - name: Remove disposable database
+        if: always()
+        run: docker rm -f -v synora-ci-db || test -z "$(docker ps -aq --filter name=^/synora-ci-db$)"
+  backend:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
-      - name: Python checks
+      - run: bash infrastructure/ci/ffmpeg.sh
+      - name: Python 3.12 locked environment
+        run: bash infrastructure/ci/venv.sh apps/api/requirements-dev.lock
+      - name: Audit, lint and types
+        env:
+          PYTHONPATH: ${{ github.workspace }}/apps/api:${{ github.workspace }}
+        working-directory: apps/api
         run: |
-          set -euo pipefail
-          python3 --version
-          python3 -m venv "$RUNNER_TEMP/synora-ci"
-          source "$RUNNER_TEMP/synora-ci/bin/activate"
-          for component in apps/api engines/music engines/media engines/creative; do
-            if [ ! -d "$component" ]; then
-              echo "::notice::Foundation only: $component absent; checks NOT executed."
-              echo "$component: NOT EXECUTED (component absent)" >> "$GITHUB_STEP_SUMMARY"
-              continue
-            fi
-            (
-              cd "$component"
-              test -f requirements-dev.lock
-              python3 -m venv "$RUNNER_TEMP/synora-$(echo "$component" | tr / -)"
-              source "$RUNNER_TEMP/synora-$(echo "$component" | tr / -)/bin/activate"
-              python -m pip install --require-hashes -r requirements-dev.lock
-              python -m pip check
-              python -m pip_audit --strict
-              python -m ruff check .
-              python -m mypy .
-              python -m pytest
-            )
+          python -m pip_audit --strict
+          python -m ruff check .
+          python -m mypy synora
+      - name: Disposable database
+        run: bash infrastructure/ci/start-db.sh
+      - name: Backend tests (database required)
+        run: |
+          source infrastructure/ci/fixture-env.sh
+          export API_PUBLIC_URL=http://testserver
+          export PYTHONPATH="$GITHUB_WORKSPACE/apps/api:$GITHUB_WORKSPACE"
+          python -m pytest -q -rs apps/api/tests --junitxml="$RUNNER_TEMP/backend.xml"
+          python "$GITHUB_WORKSPACE/infrastructure/ci/assert-no-skips.py" "$RUNNER_TEMP/backend.xml"
+      - name: Remove disposable database
+        if: always()
+        run: docker rm -f -v synora-ci-db || test -z "$(docker ps -aq --filter name=^/synora-ci-db$)"
+  api-image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Build locked API image
+        run: docker build -f infrastructure/docker/api.Dockerfile -t synora-api:ci .
+      - name: Verify image startup and health
+        run: |
+          docker run -d --name synora-ci-api -p 127.0.0.1:18000:8000 synora-api:ci
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:18000/health; then exit 0; fi
+            sleep 1
           done
-      - name: API container build
+          docker logs synora-ci-api
+          exit 1
+      - name: Remove test container
+        if: always()
+        run: docker rm -f -v synora-ci-api || test -z "$(docker ps -aq --filter name=^/synora-ci-api$)"
+  music:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify Python and FFmpeg
+        run: bash infrastructure/ci/ffmpeg.sh
+      - name: Music engine tests (stdlib, fake transport)
+        run: python3.12 -m unittest discover -s engines/music/tests -v
+  music-quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: bash infrastructure/ci/venv.sh engines/music/requirements-dev.lock
+      - run: |
+          python -m pip_audit --strict
+          python -m ruff check engines/music benchmarks/music
+          python -m mypy engines/music
+  media:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: bash infrastructure/ci/ffmpeg.sh
+      - run: bash infrastructure/ci/venv.sh engines/media/requirements-dev.lock
+      - run: |
+          python -m pip_audit --strict
+          python -m ruff check engines/media engines/creative benchmarks/media
+          python -m mypy engines/media engines/creative
+      - run: python -m unittest discover -s benchmarks/media -p 'test_*.py' -v
+      - run: python -m benchmarks.media.demo "$RUNNER_TEMP/synora-ad-demo"
+  integrated:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - run: bash infrastructure/ci/ffmpeg.sh
+      - run: bash infrastructure/ci/venv.sh tests/requirements-dev.lock
+      - run: python -m pip_audit --strict
+      - run: python -m pytest -q tests/integration/test_contract_shapes.py
+      - name: API runtime lock
         run: |
-          set -euo pipefail
-          if [ -d apps/api ]; then
-            docker build -f infrastructure/docker/api.Dockerfile -t synora-api:ci apps/api
-          else
-            echo "::notice::API container build NOT executed (API absent)."
-          fi
+          python -m pip install --require-hashes -r apps/api/requirements.lock
+          python -m pip check
+          python -m pip_audit --strict
+      - run: bash infrastructure/ci/start-db.sh
+      - name: Start local fixture services and test live API
+        run: |
+          source infrastructure/ci/fixture-env.sh
+          export SYNORA_QA_REQUIRE_LIVE=1 SYNORA_QA_FIXTURE_POSTS=1
+          export SYNORA_QA_API_URL="$API_PUBLIC_URL"
+          export PYTHONPATH="$GITHUB_WORKSPACE/apps/api:$GITHUB_WORKSPACE"
+          python -m uvicorn synora.api:app --host 127.0.0.1 --port 8000 --no-access-log > "$RUNNER_TEMP/synora-api.log" 2>&1 &
+          python -m synora.worker > "$RUNNER_TEMP/synora-worker.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/synora-worker.pid"
+          bash infrastructure/ci/wait-http.sh "$API_PUBLIC_URL/ready"
+          python -m pytest -q -rs tests/integration/test_live_api.py --junitxml="$RUNNER_TEMP/live.xml"
+          python infrastructure/ci/assert-no-skips.py "$RUNNER_TEMP/live.xml"
+      - name: Build and start web (local API)
+        working-directory: apps/web
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:8000
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+          npm run start -- --hostname 127.0.0.1 --port 3000 > "$RUNNER_TEMP/synora-web.log" 2>&1 &
+          bash "$GITHUB_WORKSPACE/infrastructure/ci/wait-http.sh" http://127.0.0.1:3000
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+      - name: Strict browser acceptance (no skips)
+        env:
+          SYNORA_QA_REQUIRE_BROWSER: '1'
+          SYNORA_QA_WEB_URL: http://127.0.0.1:3000
+        run: |
+          source infrastructure/ci/fixture-env.sh
+          # QA owner must implement this setup using an actual isolated fixture
+          # result and authenticated browser state. Missing setup is a failure.
+          test -f tests/e2e/setup_ci_fixture.sh || { echo "::error::QA/frontend fixture setup not yet committed"; exit 1; }
+          source tests/e2e/setup_ci_fixture.sh
+          python -m pytest -q -rs tests/e2e --junitxml="$RUNNER_TEMP/browser.xml"
+          python infrastructure/ci/assert-no-skips.py "$RUNNER_TEMP/browser.xml"
+      - name: Remove disposable database
+        if: always()
+        run: docker rm -f -v synora-ci-db || test -z "$(docker ps -aq --filter name=^/synora-ci-db$)"

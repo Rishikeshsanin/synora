@@ -21,3 +21,17 @@ def test_signature_fencing(monkeypatch):
 
 def test_storage_path_rejects_traversal():
     with pytest.raises(ValueError): storage.local_path("../../anything.wav")
+
+
+def test_malformed_signature(monkeypatch):
+    monkeypatch.setattr(storage,"settings",replace(settings,signing_key="x"*32))
+    assert not storage.valid_signature(uuid4(),int(time.time())+60,False,"é"*64)
+
+def test_private_file_permissions(tmp_path,monkeypatch):
+    import stat
+    monkeypatch.setattr(storage,"settings",replace(settings,media_dir=tmp_path))
+    key=f"{uuid4()}/{uuid4()}/{uuid4()}.wav"
+    storage.put_local(key,b"test")
+    assert stat.S_IMODE(storage.local_path(key).stat().st_mode)==0o600
+    storage.delete_local(key)
+    assert not storage.local_path(key).exists()
