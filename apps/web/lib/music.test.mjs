@@ -1,0 +1,12 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {musicSpec,terminal,validateJob,validateAsset} from './music.mjs';
+const form = {prompt:'  A warm melody  ',mode:'instrumental',genres:['Jazz'],moods:[],instruments:[],duration:30,bpm:'',lyrics:'hidden',language:'Telugu'};
+test('instrumental serializes contract without hidden vocals',()=>assert.deepEqual(musicSpec(form),{prompt:'A warm melody',mode:'instrumental',genres:['Jazz'],moods:[],instruments:[],duration_seconds:30,bpm:null,lyrics:null,language:null}));
+test('vocals serialize lyrics and language',()=>{const s=musicSpec({...form,mode:'vocals',bpm:'100'});assert.equal(s.lyrics,'hidden');assert.equal(s.language,'Telugu');assert.equal(s.bpm,100)});
+test('rejects blank prompt and duration bounds',()=>{for(const f of [{prompt:' '},{duration:14},{duration:121},{duration:15.5}])assert.throws(()=>musicSpec({...form,...f}))});
+test('rejects tempo and mode bounds',()=>{for(const f of [{bpm:'39'},{bpm:'201'},{bpm:'abc'},{mode:'other'}])assert.throws(()=>musicSpec({...form,...f}))});
+test('tag bounds and deduplication',()=>{assert.throws(()=>musicSpec({...form,genres:Array(9).fill('Jazz')}));assert.deepEqual(musicSpec({...form,genres:['Jazz','Jazz']}).genres,['Jazz'])});
+test('terminal statuses',()=>{for(const s of ['succeeded','failed','cancelled'])assert.equal(terminal(s),true);assert.equal(terminal('running'),false)});
+test('job provenance and asset required',()=>{const j={id:'x',status:'succeeded',progress:100,simulated:false,asset_id:'y'};assert.equal(validateJob(j),j);assert.throws(()=>validateJob({...j,asset_id:null}));assert.throws(()=>validateJob({...j,simulated:undefined}));assert.throws(()=>validateJob({...j,progress:101}))});
+test('audio URL and provenance guards',()=>{const a={id:'a',kind:'audio',mime_type:'audio/wav',url:'https://example.com/audio',simulated:false};assert.equal(validateAsset(a,false),a);assert.throws(()=>validateAsset(a,true));assert.throws(()=>validateAsset({...a,url:'javascript:alert(1)'},false));assert.throws(()=>validateAsset({...a,url:'http://example.com/audio'},false));assert.throws(()=>validateAsset({...a,kind:'video'},false))});
