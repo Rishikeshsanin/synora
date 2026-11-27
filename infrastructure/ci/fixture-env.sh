@@ -3,6 +3,8 @@ test "${GITHUB_ACTIONS:-}" = true || return 1
 export SYNORA_ENV=test MUSIC_PROVIDER=fixture SYNORA_DISPOSABLE_DB=1
 export DATABASE_URL=postgresql://synora_ci:synora-ci-local-only@127.0.0.1:55432/synora_ci
 export MEDIA_DIR="$RUNNER_TEMP/synora-media" API_PUBLIC_URL=http://127.0.0.1:8000
+mkdir -p "$MEDIA_DIR"
+chmod 700 "$MEDIA_DIR"
 export CORS_ORIGINS=http://127.0.0.1:3000
 export SYNORA_REAL_GENERATION_ENABLED=false SYNORA_REAL_MUSIC_APPROVED=0
 # Store ephemeral test credentials outside the repository, with restricted permissions.

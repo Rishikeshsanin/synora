@@ -68,9 +68,12 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
+      - run: bash infrastructure/ci/ffmpeg.sh
       - name: Python 3.12 locked environment
         run: bash infrastructure/ci/venv.sh apps/api/requirements-dev.lock
       - name: Audit, lint and types
+        env:
+          PYTHONPATH: ${{ github.workspace }}/apps/api:${{ github.workspace }}
         working-directory: apps/api
         run: |
           python -m pip_audit --strict
@@ -82,8 +85,8 @@ jobs:
         run: |
           source infrastructure/ci/fixture-env.sh
           export API_PUBLIC_URL=http://testserver
-          cd apps/api
-          python -m pytest -q -rs --junitxml="$RUNNER_TEMP/backend.xml"
+          export PYTHONPATH="$GITHUB_WORKSPACE/apps/api:$GITHUB_WORKSPACE"
+          python -m pytest -q -rs apps/api/tests --junitxml="$RUNNER_TEMP/backend.xml"
           python "$GITHUB_WORKSPACE/infrastructure/ci/assert-no-skips.py" "$RUNNER_TEMP/backend.xml"
       - name: Remove disposable database
         if: always()
@@ -96,7 +99,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Build locked API image
-        run: docker build -f infrastructure/docker/api.Dockerfile -t synora-api:ci apps/api
+        run: docker build -f infrastructure/docker/api.Dockerfile -t synora-api:ci .
       - name: Verify image startup and health
         run: |
           docker run -d --name synora-ci-api -p 127.0.0.1:18000:8000 synora-api:ci
@@ -157,6 +160,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
+      - run: bash infrastructure/ci/ffmpeg.sh
       - run: bash infrastructure/ci/venv.sh tests/requirements-dev.lock
       - run: python -m pip_audit --strict
       - run: python -m pytest -q tests/integration/test_contract_shapes.py
@@ -171,7 +175,7 @@ jobs:
           source infrastructure/ci/fixture-env.sh
           export SYNORA_QA_REQUIRE_LIVE=1 SYNORA_QA_FIXTURE_POSTS=1
           export SYNORA_QA_API_URL="$API_PUBLIC_URL"
-          export PYTHONPATH="$GITHUB_WORKSPACE/apps/api"
+          export PYTHONPATH="$GITHUB_WORKSPACE/apps/api:$GITHUB_WORKSPACE"
           python -m uvicorn synora.api:app --host 127.0.0.1 --port 8000 --no-access-log > "$RUNNER_TEMP/synora-api.log" 2>&1 &
           python -m synora.worker > "$RUNNER_TEMP/synora-worker.log" 2>&1 &
           echo "$!" > "$RUNNER_TEMP/synora-worker.pid"
