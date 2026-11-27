@@ -12,7 +12,7 @@ test("landing and studio responsive screenshots",async({page},testInfo)=>{
  }
 });
 test("studio form, fixture provenance, native playback and download",async({page},testInfo)=>{
- await page.goto("/studio");await expect(page.getByRole("button",{name:"Create music"})).toBeDisabled();
+ await page.goto("/studio");await expect(page.getByRole("button",{name:/Create (music|server fixture)/})).toBeDisabled();
  await page.getByRole("checkbox",{name:"Explicit local demo"}).check();
  await page.getByRole("button",{name:"Purpose",exact:true}).click();
  await page.getByRole("button",{name:/Film & story/}).click();
@@ -35,4 +35,15 @@ test("studio form, fixture provenance, native playback and download",async({page
 });
 test("keyboard focus, reduced motion and future studio",async({page})=>{
  await page.emulateMedia({reducedMotion:"reduce"});await page.goto("/studio");await page.keyboard.press("Tab");await expect(page.getByRole("link",{name:"Skip to content"})).toBeFocused();await page.keyboard.press("Enter");await expect(page).toHaveURL(/#main$/);await page.getByRole("button",{name:"Creative Studio"}).click();await expect(page.getByText(/Video generation is not available/)).toBeVisible();
+});
+
+test("local fixture library is labeled and does not offer server cancellation",async({page})=>{
+ await page.goto("/studio");
+ await page.getByRole("checkbox",{name:"Explicit local demo"}).check();
+ await page.getByLabel("Describe your sound").fill("A local test");
+ await page.getByRole("button",{name:"Play local fixture"}).click();
+ await expect(page.getByText("Local fixture · Not AI-generated").first()).toBeVisible();
+ await expect(page.getByRole("button",{name:"Cancel server generation"})).toHaveCount(0);
+ await page.getByRole("button",{name:"Creative Library"}).click();
+ await expect(page.getByRole("button",{name:/Local preview.*Local fixture/})).toBeVisible();
 });

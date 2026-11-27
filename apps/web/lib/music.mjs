@@ -18,8 +18,14 @@ export function musicSpec(form) {
   if (language && language.length > 32) throw new Error('Language must be at most 32 characters.');
   return {prompt,mode:form.mode,genres:tags('genres'),moods:tags('moods'),instruments:tags('instruments'),duration_seconds,bpm,lyrics,language};
 }
-export function validateJob(job) {
+export function jobPath(id, cancel = false) {
+  return "/v1/jobs/" + encodeURIComponent(id) + (cancel ? "/cancel" : "");
+}
+/** @param {string} [expectedId] @param {boolean} [expectedSimulated] */
+export function validateJob(job, expectedId, expectedSimulated) {
   if (!job || typeof job.id !== 'string' || !['queued','running','succeeded','failed','cancelled'].includes(job.status) || typeof job.progress !== 'number' || !Number.isFinite(job.progress) || job.progress < 0 || job.progress > 100 || typeof job.simulated !== 'boolean') throw new Error('Invalid job response.');
+  if (expectedId !== undefined && job.id !== expectedId) throw new Error('Unexpected job identity.');
+  if (expectedSimulated !== undefined && job.simulated !== expectedSimulated) throw new Error('Job provenance changed.');
   if (job.status === 'succeeded' && typeof job.asset_id !== 'string') throw new Error('Completed job has no asset.');
   return job;
 }

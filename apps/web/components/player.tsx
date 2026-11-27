@@ -6,6 +6,8 @@ import type {Asset} from "../lib/api";
 export default function Player({asset,onRefresh}:{asset:Asset;onRefresh:(download?:boolean)=>Promise<Asset>}){
  const waveform=useRef<HTMLDivElement>(null),audio=useRef<HTMLAudioElement>(null);
  const [warning,setWarning]=useState(""),[busy,setBusy]=useState(false);
+ const mounted=useRef(false),downloadController=useRef<AbortController|null>(null);
+ useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;downloadController.current?.abort()}},[]);
  const refreshing=useRef(false),autoTried=useRef(false),restore=useRef<{time:number;play:boolean}|null>(null);
  const refreshRef=useRef(onRefresh);
  useEffect(()=>{refreshRef.current=onRefresh},[onRefresh]);
@@ -26,13 +28,13 @@ export default function Player({asset,onRefresh}:{asset:Asset;onRefresh:(downloa
    ws.on("error",fail);void ws.load(asset.url).catch(fail);
    return()=>{mounted=false;ws.destroy()};
  },[asset,recover]);
- async function download(){setBusy(true);setWarning("");try{
-   let fresh=await refreshRef.current(true);
-   const get=()=>fetch(fresh.url,{credentials:"omit",cache:"no-store",referrerPolicy:"no-referrer",signal:AbortSignal.timeout(30000)});
-   let res=await get();if(!fresh.url.startsWith("blob:")&&(res.status===401||res.status===403)){fresh=await refreshRef.current(true);res=await get()}
+ async function download(){if(downloadController.current)return;const c=new AbortController();downloadController.current=c;setBusy(true);setWarning("");try{
+   let fresh=await refreshRef.current(true);if(c.signal.aborted||!mounted.current)return;
+   const get=()=>fetch(fresh.url,{credentials:"omit",cache:"no-store",referrerPolicy:"no-referrer",signal:AbortSignal.any([c.signal,AbortSignal.timeout(30000)])});
+   let res=await get();if(!fresh.url.startsWith("blob:")&&(res.status===401||res.status===403)){fresh=await refreshRef.current(true);if(c.signal.aborted||!mounted.current)return;res=await get()}
    if(!res.ok)throw new Error("Download unavailable.");
-   const blob=await res.blob();if(!blob.size)throw new Error("Empty audio download.");
+   const blob=await res.blob();if(c.signal.aborted||!mounted.current)return;if(!blob.size)throw new Error("Empty audio download.");
    const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="synora-"+fresh.id+"."+(fresh.mime_type.includes("mpeg")?"mp3":fresh.mime_type.includes("wav")?"wav":fresh.mime_type.includes("ogg")?"ogg":fresh.mime_type.includes("flac")?"flac":"audio");a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)
- }catch{setWarning("Download failed. Check your connection and retry.")}finally{setBusy(false)}}
- return <div className="player"><div ref={waveform} aria-hidden="true"/><audio ref={audio} controls preload="metadata" src={asset.url} onLoadedMetadata={()=>{const el=audio.current,saved=restore.current;if(!el)return;autoTried.current=false;if(saved){restore.current=null;el.currentTime=Math.min(saved.time,Number.isFinite(el.duration)?el.duration:saved.time);if(saved.play)void el.play().catch(()=>setWarning("Press play to resume audio."))}}} onPlay={()=>{if(needsRefresh(asset)){audio.current?.pause();void recover(true,true)}}} onError={()=>{setWarning("Audio link could not be played. Refresh and try again.");void recover(true)}} aria-label="Track playback"/>{warning&&<p role="status" className="notice">{warning}</p>}<div className="row-actions"><button className="button secondary" disabled={busy} onClick={download}>{busy?"Downloading…":"Download audio"}</button>{!asset.url.startsWith("blob:")&&<button className="button secondary" onClick={()=>void recover()}>Refresh link</button>}</div></div>
+ }catch{if(mounted.current&&!c.signal.aborted)setWarning("Download failed. Check your connection and retry.")}finally{if(downloadController.current===c){downloadController.current=null;if(mounted.current)setBusy(false)}}}
+ return <div className="player"><div ref={waveform} aria-hidden="true"/><audio ref={audio} crossOrigin="anonymous" controls preload="metadata" src={asset.url} onLoadedMetadata={()=>{const el=audio.current,saved=restore.current;if(!el)return;autoTried.current=false;if(saved){restore.current=null;el.currentTime=Math.min(saved.time,Number.isFinite(el.duration)?el.duration:saved.time);if(saved.play)void el.play().catch(()=>setWarning("Press play to resume audio."))}}} onPlay={()=>{if(needsRefresh(asset)){audio.current?.pause();void recover(true,true)}}} onError={()=>{setWarning("Audio link could not be played. Refresh and try again.");void recover(true)}} aria-label="Track playback"/>{warning&&<p role="status" className="notice">{warning}</p>}<div className="row-actions"><button className="button secondary" disabled={busy} onClick={download}>{busy?"Downloading…":"Download audio"}</button>{!asset.url.startsWith("blob:")&&<button className="button secondary" onClick={()=>void recover()}>Refresh link</button>}</div></div>
 }

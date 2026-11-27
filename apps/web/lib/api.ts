@@ -1,4 +1,4 @@
-import {validateJob,validateAsset} from "./music.mjs";
+import {validateJob,validateAsset,jobPath} from "./music.mjs";
 import {validateSignedAsset,downloadPath,capabilityState} from "./media.mjs";
 export type Form={prompt:string;mode:"instrumental"|"vocals";genres:string[];moods:string[];instruments:string[];duration:number;bpm:string;lyrics:string;language:string};
 export type Spec={prompt:string;mode:"instrumental"|"vocals";genres:string[];moods:string[];instruments:string[];duration_seconds:number;bpm:number|null;lyrics:string|null;language:string|null};
@@ -8,13 +8,14 @@ export const apiBase=(process.env.NEXT_PUBLIC_API_BASE_URL||"").replace(/\/$/,""
 async function request(path:string,token:string,signal:AbortSignal,options:RequestInit={}){
  if(!apiBase)throw new Error("API is not configured. Choose the local demo or configure the API.");
  if(!token)throw new Error("Sign in before creating or reading private tracks.");
- const response=await fetch(apiBase+path,{...options,signal,cache:"no-store",headers:{Authorization:"Bearer "+token,...options.headers}});
+ const response=await fetch(apiBase+path,{...options,signal,cache:"no-store",credentials:"omit",referrerPolicy:"no-referrer",redirect:"error",headers:{Authorization:"Bearer "+token,...options.headers}});
  const data=await response.json().catch(()=>null);
  if(!response.ok)throw new Error(typeof data?.message==="string"?data.message:"Request failed ("+response.status+").");
  return data;
 }
 export async function submit(spec:Spec,key:string,token:string,signal:AbortSignal):Promise<Job>{return validateJob(await request("/v1/music/jobs",token,signal,{method:"POST",headers:{"Content-Type":"application/json","Idempotency-Key":key},body:JSON.stringify(spec)}))}
-export async function readJob(id:string,token:string,signal:AbortSignal):Promise<Job>{return validateJob(await request("/v1/jobs/"+encodeURIComponent(id),token,signal))}
+export async function readJob(id:string,token:string,signal:AbortSignal,simulated?:boolean):Promise<Job>{return validateJob(await request(jobPath(id),token,signal),id,simulated)}
+export async function cancelJob(id:string,simulated:boolean,token:string,signal:AbortSignal):Promise<Job>{return validateJob(await request(jobPath(id,true),token,signal,{method:"POST"}),id,simulated)}
 export async function readAsset(id:string,simulated:boolean,token:string,signal:AbortSignal,download=false):Promise<Asset>{return validateSignedAsset(validateAsset(await request(download?downloadPath(id):"/v1/assets/"+encodeURIComponent(id),token,signal),simulated),id)}
 export async function readCapabilities(signal:AbortSignal):Promise<{simulated:boolean;available:boolean}>{if(!apiBase)throw new Error("API not configured.");const res=await fetch(apiBase+"/v1/music/capabilities",{signal,cache:"no-store",credentials:"omit"});if(!res.ok)throw new Error("Capabilities unavailable.");return capabilityState(await res.json())}
 export function demoAudio():string{
