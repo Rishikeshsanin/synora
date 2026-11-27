@@ -89,10 +89,11 @@ jobs:
       - run: python -m ruff check .
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         working-directory: apps/api
-      - run: python -m mypy synora
+      - run: python -m mypy --namespace-packages --explicit-package-bases synora
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         env:
           PYTHONPATH: ${{ github.workspace }}/apps/api:${{ github.workspace }}
+          MYPYPATH: ${{ github.workspace }}/apps/api:${{ github.workspace }}
         working-directory: apps/api
       - name: Disposable database
         id: db
@@ -154,7 +155,7 @@ jobs:
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
       - run: python -m ruff check engines/music benchmarks/music
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
-      - run: python -m mypy engines/music
+      - run: python -m mypy --namespace-packages --explicit-package-bases engines/music
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
   media:
     runs-on: ubuntu-24.04
@@ -170,7 +171,7 @@ jobs:
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
       - run: python -m ruff check engines/media engines/creative benchmarks/media
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
-      - run: python -m mypy engines/media engines/creative
+      - run: python -m mypy --namespace-packages --explicit-package-bases engines/media engines/creative
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
       - run: python -m unittest discover -s benchmarks/media -p 'test_*.py' -v
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
