@@ -7,6 +7,7 @@ FROM python:3.12-slim
 ENV PATH="/opt/venv/bin:$PATH" PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 RUN groupadd --gid 10001 synora && useradd --uid 10001 --gid 10001 --create-home synora
+RUN install -d -m 0700 -o 10001 -g 10001 /var/lib/synora/media
 WORKDIR /app
 COPY --from=build /opt/venv /opt/venv
 COPY --chown=10001:10001 apps/api/synora ./synora
