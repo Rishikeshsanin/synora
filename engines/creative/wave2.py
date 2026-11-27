@@ -1,5 +1,8 @@
 """Offline proposal: deterministic concept explanations and signed review bundles."""
-import hashlib, hmac, json, time
+import hashlib
+import hmac
+import json
+import time
 from pathlib import Path
 
 NEUTRAL = ('A closer look', 'Explore the collection', 'Discover the details', 'Meet the product')
@@ -43,6 +46,8 @@ def concepts(brief):
 def validate(board):
     if board.get('version') != 'm2-offline-v2' or board.get('ratio') not in RATIOS or board.get('fps') != 24:
         raise ValueError('unsupported board')
+    if board.get('presentation', 'classic') not in ('classic', 'editorial-v1'):
+        raise ValueError('unsupported presentation')
     if board.get('concept') not in {c['id'] for c in concepts(board['brief'])}:
         raise ValueError('unknown concept')
     if not isinstance(board.get('scenes'), list) or len(board['scenes']) != 3:
