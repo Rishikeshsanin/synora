@@ -1,7 +1,7 @@
 # Source from a disposable GitHub-hosted runner. Values are synthetic test-only.
 test "${GITHUB_ACTIONS:-}" = true || return 1
 export SYNORA_ENV=test MUSIC_PROVIDER=fixture SYNORA_DISPOSABLE_DB=1
-export DATABASE_URL=postgresql://synora_ci:synora-ci-local-only@127.0.0.1:55432/synora_ci
+export DATABASE_URL=postgresql://synora_ci:synora-ci-local-only@127.0.0.1:55432/synora_qa
 export MEDIA_DIR="$RUNNER_TEMP/synora-media" API_PUBLIC_URL=http://127.0.0.1:8000
 mkdir -p "$MEDIA_DIR"
 chmod 700 "$MEDIA_DIR"
