@@ -193,6 +193,112 @@ def test_precommit_disconnect_retry_retains_single_authoritative_asset(stack, mo
     assert row["storage_key"] != abandoned[0]
     assert storage.local_path(row["storage_key"]).is_file()
     assert client.get("/v1/assets/" + str(result["asset_id"]), headers=b).status_code == 404
-    # Report without paths or tokens. The abandoned bytes still require
-    # independent reconciliation verification; passing this test is not that gate.
-    print("QA abandoned attempt retained:", storage.local_path(abandoned[0]).exists())
+    # The explicit reconciler must retain young orphans and protect committed bytes.
+    import time
+    from synora.cleanup import reconcile_attempt
+    orphan = storage.local_path(abandoned[0])
+    committed = storage.local_path(row["storage_key"])
+    assert orphan.is_file()
+    assert not reconcile_attempt(abandoned[0])
+    assert orphan.is_file()
+    old = time.time() - 700
+    os.utime(orphan, (old, old))
+    os.utime(committed, (old, old))
+    assert not reconcile_attempt(row["storage_key"])
+    assert committed.is_file()
+    assert reconcile_attempt(abandoned[0])
+    assert not orphan.exists()
+    assert not reconcile_attempt(abandoned[0])
+    assert committed.is_file()
+
+
+def test_reconciler_fences_active_and_expired_lease(stack, monkeypatch):
+    from contextlib import contextmanager
+    import time
+    from synora.cleanup import reconcile_attempt
+    db, _, storage, client, _, b = stack
+    job = submit(client, b)
+    claim = db.claim()
+    assert str(claim["id"]) == job
+    key = f'{claim["user_id"]}/{job}/{claim["lease_token"]}.wav'
+    storage.put_local(key, b"synthetic QA attempt bytes")
+    path = storage.local_path(key)
+    old = time.time() - 700
+    os.utime(path, (old, old))
+    try:
+        assert not reconcile_attempt(key)
+        assert path.is_file()
+        with db.db() as conn:
+            conn.execute("update synora.jobs set lease_until=now()-interval '1 second' where id=%s", (job,))
+        assert not reconcile_attempt(key)
+        assert path.is_file()
+        assert db.claim() is None  # recovery fences the expired lease
+        actual_db = db.db
+
+        @contextmanager
+        def unavailable():
+            raise ConnectionError("QA injected DB unavailable")
+            yield
+
+        with monkeypatch.context() as patch:
+            patch.setattr(db, "db", unavailable)
+            # Either fail closed or raise; neither may delete uncertain bytes.
+            try:
+                assert reconcile_attempt(key) is False
+            except ConnectionError:
+                pass
+            assert path.is_file()
+        assert db.db is actual_db
+        assert reconcile_attempt(key)
+        assert not path.exists()
+    finally:
+        client.post("/v1/jobs/" + job + "/cancel", headers=b)
+
+
+def test_library_two_owner_keyset_pagination(stack):
+    db, worker, _, client, a, b = stack
+    jobs_a = [submit(client, a)]
+    jobs_b = [submit(client, b), submit(client, b)]
+    for _ in range(3):
+        assert worker.run_one()
+    # Same timestamp exercises the UUID tie-breaker. Only dedicated QA records.
+    with db.db() as c:
+        c.execute("update synora.jobs set created_at=now() where id in (%s,%s)",
+                  tuple(jobs_b))
+    def collect(headers):
+        seen = {}
+        cursor = None
+        for _ in range(100):
+            params = {"limit": 1}
+            if cursor is not None:
+                params["cursor"] = cursor
+            response = client.get("/v1/music/library", headers=headers, params=params)
+            assert response.status_code == 200
+            payload = response.json()
+            assert len(payload["items"]) <= 1
+            for item in payload["items"]:
+                job_id = item["job"]["id"]
+                assert job_id not in seen, "duplicate keyset page"
+                seen[job_id] = item
+            cursor = payload["next_cursor"]
+            if cursor is None:
+                return seen
+            assert payload["items"] and cursor == payload["items"][-1]["job"]["id"]
+        pytest.fail("Library pagination did not terminate")
+    for headers, own, foreign in ((a, jobs_a, jobs_b), (b, jobs_b, jobs_a)):
+        seen = collect(headers)
+        assert set(own) <= seen.keys()
+        assert not set(foreign) & seen.keys()
+        for job_id in own:
+            item = seen[job_id]
+            assert item["prompt"] == SPEC["prompt"]
+            assert item["job"]["status"] == "succeeded"
+            assert item["job"]["simulated"] is True
+            assert item["asset"]["simulated"] is True
+            assert item["asset"]["id"] == item["job"]["asset_id"]
+        for cursor in (foreign[0], str(uuid4())):
+            response = client.get("/v1/music/library", headers=headers,
+                                  params={"limit": 1, "cursor": cursor})
+            assert response.status_code == 422
+            assert response.json()["code"] == "invalid_cursor"
+    assert client.get("/v1/music/library").status_code == 401

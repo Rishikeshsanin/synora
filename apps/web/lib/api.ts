@@ -1,9 +1,12 @@
 import {validateJob,validateAsset,jobPath} from "./music.mjs";
 import {validateSignedAsset,downloadPath,capabilityState} from "./media.mjs";
+import {libraryPath,parseLibraryPage} from "./library.mjs";
 export type Form={prompt:string;mode:"instrumental"|"vocals";genres:string[];moods:string[];instruments:string[];duration:number;bpm:string;lyrics:string;language:string};
 export type Spec={prompt:string;mode:"instrumental"|"vocals";genres:string[];moods:string[];instruments:string[];duration_seconds:number;bpm:number|null;lyrics:string|null;language:string|null};
 export type Job={id:string;status:"queued"|"running"|"succeeded"|"failed"|"cancelled";progress:number;asset_id:string|null;error:{code:string;message:string}|null;created_at:string;updated_at:string;provider:string|null;simulated:boolean};
 export type Asset={id:string;kind:"audio";mime_type:string;duration_seconds:number|null;url:string;expires_at:string|null;simulated:boolean};
+export type LibraryItem={job:Job;asset:{id:string;duration_seconds:number}|null;prompt:string};
+export type LibraryPage={items:LibraryItem[];next_cursor:string|null};
 export const apiBase=(process.env.NEXT_PUBLIC_API_BASE_URL||"").replace(/\/$/,"");
 async function request(path:string,token:string,signal:AbortSignal,options:RequestInit={}){
  if(!apiBase)throw new Error("API is not configured. Choose the local demo or configure the API.");
@@ -17,6 +20,7 @@ export async function submit(spec:Spec,key:string,token:string,signal:AbortSigna
 export async function readJob(id:string,token:string,signal:AbortSignal,simulated?:boolean):Promise<Job>{return validateJob(await request(jobPath(id),token,signal),id,simulated)}
 export async function cancelJob(id:string,simulated:boolean,token:string,signal:AbortSignal):Promise<Job>{return validateJob(await request(jobPath(id,true),token,signal,{method:"POST"}),id,simulated)}
 export async function readAsset(id:string,simulated:boolean,token:string,signal:AbortSignal,download=false):Promise<Asset>{return validateSignedAsset(validateAsset(await request(download?downloadPath(id):"/v1/assets/"+encodeURIComponent(id),token,signal),simulated),id)}
+export async function readLibrary(token:string,signal:AbortSignal,cursor:string|null=null):Promise<LibraryPage>{return parseLibraryPage(await request(libraryPath(cursor),token,signal),cursor)}
 export async function readCapabilities(signal:AbortSignal):Promise<{simulated:boolean;available:boolean}>{if(!apiBase)throw new Error("API not configured.");const res=await fetch(apiBase+"/v1/music/capabilities",{signal,cache:"no-store",credentials:"omit"});if(!res.ok)throw new Error("Capabilities unavailable.");return capabilityState(await res.json())}
 export function demoAudio():string{
  const rate=16000,n=rate*15,buf=new ArrayBuffer(44+n*2),v=new DataView(buf);

@@ -1,0 +1,18 @@
+{
+  "python": "3.13.5",
+  "ffmpeg": true,
+  "ffprobe": true,
+  "git": true,
+  "ace_installed": false,
+  "torch": "2.10.0+cpu",
+  "cuda_build": null,
+  "cuda_devices": 0,
+  "cuda_available": false,
+  "generation_executed": false,
+  "blockers": [
+    "No usable CUDA GPU; do not download weights or start inference",
+    "Pinned ACE-Step environment not installed",
+    "Python 3.12 required in the pinned inference environment"
+  ],
+  "ready_for_local_checks": false
+}

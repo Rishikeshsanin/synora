@@ -1,5 +1,8 @@
 """Local Playwright acceptance; selectors are proposed QA hooks, not ratified contracts."""
 import os
+import hashlib
+import io
+import wave
 from urllib.parse import urlparse
 
 import pytest
@@ -49,26 +52,61 @@ def test_landing_layout_and_keyboard(browser, width, height):
 
 
 def test_existing_fixture_playback_download_and_disclosure(browser):
+    """A seeded server job must survive page reload and use native app controls."""
     instance, url = browser
     asset_url = setting('SYNORA_QA_FIXTURE_PAGE_URL')
-    assert urlparse(asset_url).hostname == urlparse(url).hostname
+    api = setting('SYNORA_QA_API_URL').rstrip('/')
+    job_id = setting('SYNORA_QA_FIXTURE_JOB_ID')
+    token = setting('SYNORA_QA_TOKEN_A')
+    assert urlparse(asset_url).netloc == urlparse(url).netloc
+    assert urlparse(api).hostname in ('localhost', '127.0.0.1', '::1')
     context = instance.new_context(storage_state=setting('SYNORA_QA_STORAGE_STATE'),
                                    accept_downloads=True)
     try:
         page = context.new_page()
         response = page.goto(asset_url, wait_until='domcontentloaded')
         assert response and response.ok
-        disclosure = page.get_by_test_id('generation-provenance')
-        expect(disclosure).to_be_visible()
-        expect(disclosure).to_contain_text('simulated', ignore_case=True)
-        page.get_by_test_id('audio-play').click()
-        page.wait_for_function("""() => Array.from(document.querySelectorAll('audio'))
-            .some(a => !a.paused && a.currentTime > 0)""", timeout=15000)
-        with page.expect_download(timeout=15000) as download:
-            page.get_by_test_id('audio-download').click()
-        artifact = download.value
-        assert artifact.failure() is None
-        assert artifact.path().stat().st_size > 0
+        headers = {'Authorization': 'Bearer ' + token}
+        job = context.request.get(api + '/v1/jobs/' + job_id, headers=headers)
+        assert job.status == 200
+        body = job.json()
+        assert body['status'] == 'succeeded' and body['simulated'] is True
+        asset_id = body['asset_id']
+        # No generation or injected audio is permitted in this persisted-result gate.
+        posts = []
+        page.on('request', lambda req: posts.append(req.method)
+                if req.method == 'POST' and '/v1/music/jobs' in req.url else None)
+        for _ in range(2):
+            expect(page.get_by_role('button', name='Creative Library')).to_be_visible()
+            page.get_by_role('button', name='Creative Library').click()
+            track = page.get_by_test_id('library-track-' + job_id)
+            expect(track).to_be_visible(timeout=20000)
+            expect(track).to_contain_text('Server fixture · Not AI-generated')
+            track.click()
+            audio = page.get_by_label('Track playback')
+            expect(audio).to_be_visible()
+            src = audio.get_attribute('src')
+            if not src or src.startswith('blob:') or urlparse(src).hostname not in ('localhost','127.0.0.1','::1'):
+                pytest.fail('Persisted track did not expose local signed server media', pytrace=False)
+            audio.evaluate('a => a.play()')
+            page.wait_for_function("document.querySelector('audio').currentTime > 0", timeout=15000)
+            with page.expect_download(timeout=20000) as download:
+                page.get_by_role('button', name='Download audio').click()
+            artifact = download.value
+            assert artifact.failure() is None
+            payload = artifact.path().read_bytes()
+            with wave.open(io.BytesIO(payload)) as wav:
+                assert wav.getnframes() > 0 and wav.getframerate() > 0
+            meta = context.request.get(api + '/v1/assets/' + asset_id, headers=headers)
+            assert meta.status == 200 and meta.json()['simulated'] is True
+            signed = meta.json()['url']
+            if urlparse(signed).hostname not in ('localhost','127.0.0.1','::1'):
+                pytest.fail('Unexpected media host', pytrace=False)
+            server = context.request.get(signed)
+            assert server.status == 200
+            assert hashlib.sha256(payload).digest() == hashlib.sha256(server.body()).digest()
+            page.reload(wait_until='domcontentloaded')
+        assert not posts, 'Persisted playback must not generate a replacement job'
     finally:
         context.close()
 
