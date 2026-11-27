@@ -242,7 +242,15 @@ def test_project_recipes_and_scoped_library(monkeypatch):
         assert client.get(recipe_path,headers=b).status_code==404
         assert client.get(recipe_path).status_code==401
         assert run_one()
-        assert client.get(recipe_path,headers=a).json()["spec"]==spec
+        saved=client.get(recipe_path,headers=a).json()
+        assert saved["spec"]==spec
+        # Reuse is an explicit fresh submission, not a side effect of reading a recipe.
+        reuse=client.post(path,params={"project_id":saved["project_id"]},
+                          headers=a|{"Idempotency-Key":"reuse-recipe"},json=saved["spec"])
+        assert reuse.status_code==202
+        reuse_id=reuse.json()["id"]
+        assert reuse_id!=job
+        assert client.post(f"/v1/jobs/{reuse_id}/cancel",headers=a).json()["status"]=="cancelled"
         other_job=client.post(path,params={"project_id":q},headers=a|{"Idempotency-Key":"other-project"},json=SPEC)
         assert other_job.status_code==202
         other_id=other_job.json()["id"]
@@ -250,11 +258,15 @@ def test_project_recipes_and_scoped_library(monkeypatch):
         library="/v1/music/library"
         assert client.get(library,params={"project_id":foreign},headers=a).status_code==404
         assert client.get(library,params={"project_id":p,"cursor":other_id},headers=a).status_code==422
-        page=client.get(library,params={"project_id":p},headers=a).json()
-        assert len(page["items"])==1 and page["next_cursor"] is None
-        assert page["items"][0]["job"]["id"]==job
-        assert client.get(page["items"][0]["asset"]["url"]).content[:4]==b"RIFF"
-        assert {x["job"]["id"] for x in client.get(library,headers=a).json()["items"]}=={job,other_id}
+        page=client.get(library,params={"project_id":p,"limit":1},headers=a).json()
+        assert len(page["items"])==1 and page["next_cursor"]==reuse_id
+        assert page["items"][0]["job"]["id"]==reuse_id
+        page2=client.get(library,params={"project_id":p,"cursor":page["next_cursor"]},headers=a).json()
+        assert len(page2["items"])==1 and page2["next_cursor"] is None
+        assert page2["items"][0]["job"]["id"]==job
+        assert client.get(page2["items"][0]["asset"]["url"]).content[:4]==b"RIFF"
+        assert {x["job"]["id"] for x in client.get(library,headers=a).json()["items"]}=={job,other_id,reuse_id}
+        assert client.get(library,params={"project_id":foreign},headers=b).json()=={"items":[],"next_cursor":None}
         with db.db() as conn:
             row=conn.execute("select project_id from synora.jobs where id=%s",(job,)).fetchone()
             assert str(row["project_id"])==p
