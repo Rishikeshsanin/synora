@@ -172,3 +172,37 @@ def test_persistent_library_pagination_and_isolation(monkeypatch):
         assert client.get(endpoint,headers=b).json()["items"][0]["prompt"]=="PRIVATE"
         assert client.post(f"/v1/jobs/{first['id']}/cancel",headers=a).json()["status"]=="succeeded"
         assert client.post(f"/v1/jobs/{first['id']}/cancel",headers=b).status_code==404
+
+
+def test_reconcile_only_definitive_stale_fixture(monkeypatch):
+    from synora.cleanup import reconcile_attempt
+    from synora.storage import local_path, put_local
+    uid=uuid4()
+    job=db.submit(uid,"reconcile",SPEC)
+    running=db.claim()
+    assert running["id"]==job["id"]
+    key=f"{uid}/{job['id']}/{running['lease_token']}.wav"
+    put_local(key,b"test orphan")
+    path=local_path(key)
+    assert not reconcile_attempt(key)  # young artifact
+    old=time.time()-601
+    os.utime(path,(old,old))
+    assert not reconcile_attempt(key)  # matching lease, even if expired
+    with db.db() as c:
+        c.execute("update synora.jobs set lease_until=now()-interval '1 second' where id=%s",(job["id"],))
+    assert not reconcile_attempt(key)
+    db.cancel(uid,job["id"])
+    assert reconcile_attempt(key)
+    assert not path.exists()
+    assert not reconcile_attempt(key)
+    assert db.owned_job(uid,job["id"])["status"]=="cancelled"
+
+    completed=db.submit(uid,"reconcile-committed",SPEC)
+    assert run_one()
+    with db.db() as c:
+        record=c.execute("select storage_key from synora.assets where job_id=%s",(completed["id"],)).fetchone()
+    committed_key=record["storage_key"]
+    committed_path=local_path(committed_key)
+    os.utime(committed_path,(old,old))
+    assert not reconcile_attempt(committed_key)
+    assert committed_path.is_file()
