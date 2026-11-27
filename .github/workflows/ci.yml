@@ -107,6 +107,17 @@ jobs:
           export PYTHONPATH="$GITHUB_WORKSPACE/apps/api:$GITHUB_WORKSPACE"
           python -m pytest -q -rs apps/api/tests --junitxml="$RUNNER_TEMP/backend.xml"
           python "$GITHUB_WORKSPACE/infrastructure/ci/assert-no-skips.py" "$RUNNER_TEMP/backend.xml"
+      - name: Collect backend-evidence counts only
+        if: always()
+        run: python3.12 infrastructure/ci/evidence.py junit "$RUNNER_TEMP/backend-evidence/summary.json" "$RUNNER_TEMP/backend.xml"
+      - name: Upload backend-evidence (sanitized)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: backend-evidence
+          path: ${{ runner.temp }}/backend-evidence/summary.json
+          retention-days: 7
+          if-no-files-found: error
       - name: Remove disposable database
         if: always()
         run: docker rm -f -v synora-ci-db || test -z "$(docker ps -aq --filter name=^/synora-ci-db$)"
@@ -146,6 +157,17 @@ jobs:
       - name: Real API and worker containers with private shared media
         if: ${{ !cancelled() && steps.db.outcome == 'success' }}
         run: bash infrastructure/ci/container-fixture.sh
+      - name: Collect container-evidence counts only
+        if: always()
+        run: python3.12 infrastructure/ci/evidence.py junit "$RUNNER_TEMP/container-evidence/summary.json" "$RUNNER_TEMP/container-live.xml"
+      - name: Upload container-evidence (sanitized)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: container-evidence
+          path: ${{ runner.temp }}/container-evidence/summary.json
+          retention-days: 7
+          if-no-files-found: error
       - name: Remove disposable containers
         if: always()
         run: |
@@ -201,7 +223,7 @@ jobs:
           python engines/music/verify_backend_boundary.py
   media:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -220,13 +242,33 @@ jobs:
         env:
           OPENBLAS_NUM_THREADS: '1'
       - run: python -m benchmarks.media.demo "$RUNNER_TEMP/synora-ad-demo"
+        id: preview
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         env:
           OPENBLAS_NUM_THREADS: '1'
       - run: python -m benchmarks.media.wave2_demo "$RUNNER_TEMP/synora-wave2-demo"
+        id: hd
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         env:
           OPENBLAS_NUM_THREADS: '1'
+      - name: Render classic/editorial A/B in all three ratios (generated fixtures only)
+        id: editorial
+        if: ${{ !cancelled() && steps.hd.outcome == 'success' }}
+        env:
+          OPENBLAS_NUM_THREADS: '1'
+        run: python -m benchmarks.media.editorial_demo "$RUNNER_TEMP/synora-wave2-demo/product-0.png" "$RUNNER_TEMP/synora-wave2-demo/original.wav" "$RUNNER_TEMP/synora-editorial-demo"
+      - name: Stage verified synthetic render evidence
+        id: media_evidence
+        if: ${{ !cancelled() && steps.preview.outcome == 'success' && steps.hd.outcome == 'success' && steps.editorial.outcome == 'success' }}
+        run: python infrastructure/ci/evidence.py media "$RUNNER_TEMP" "$RUNNER_TEMP/synora-render-evidence"
+      - name: Upload synthetic-render-evidence (sanitized)
+        if: ${{ !cancelled() && steps.media_evidence.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: synthetic-render-evidence
+          path: ${{ runner.temp }}/synora-render-evidence/
+          retention-days: 7
+          if-no-files-found: error
   qa-db:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -251,12 +293,27 @@ jobs:
           export SYNORA_QA_DISPOSABLE_DB=1 SYNORA_QA_REQUIRE_DB=1
           python -m pytest -q -rs tests/integration/test_wave2_worker.py --junitxml="$RUNNER_TEMP/qa-db.xml"
           python infrastructure/ci/assert-no-skips.py "$RUNNER_TEMP/qa-db.xml"
+      - name: Collect worker-evidence counts only
+        if: always()
+        run: python3.12 infrastructure/ci/evidence.py junit "$RUNNER_TEMP/worker-evidence/summary.json" "$RUNNER_TEMP/qa-db.xml"
+      - name: Upload worker-evidence (sanitized)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: worker-evidence
+          path: ${{ runner.temp }}/worker-evidence/summary.json
+          retention-days: 7
+          if-no-files-found: error
       - name: Remove disposable database
         if: always()
         run: docker rm -f -v synora-ci-db || test -z "$(docker ps -aq --filter name=^/synora-ci-db$)"
   integrated:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 35
+    env:
+      NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:8000
+      NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:19090
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: synthetic-loopback-test-key
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -269,7 +326,7 @@ jobs:
         id: qa_deps
       - run: python -m pip_audit --strict
         if: ${{ !cancelled() && steps.qa_deps.outcome == 'success' }}
-      - run: python -m pytest -q tests/integration/test_contract_shapes.py
+      - run: python -m pytest -q tests/integration/test_contract_shapes.py --junitxml="$RUNNER_TEMP/contracts.xml"
         if: ${{ !cancelled() && steps.qa_deps.outcome == 'success' }}
       - name: API runtime lock
         id: api_deps
@@ -299,6 +356,8 @@ jobs:
         run: |
           source infrastructure/ci/fixture-env.sh
           export SYNORA_QA_REQUIRE_LIVE=1 SYNORA_QA_FIXTURE_POSTS=1 SYNORA_QA_API_URL="$API_PUBLIC_URL"
+          # Distinct fixture owners preserve the browser accounts\u0027 ordinary rate budget.
+          export SYNORA_QA_TOKEN_A="$SYNORA_QA_LIVE_TOKEN_A" SYNORA_QA_TOKEN_B="$SYNORA_QA_LIVE_TOKEN_B"
           python -m pytest -q -rs tests/integration/test_live_api.py --junitxml="$RUNNER_TEMP/live.xml"
           python infrastructure/ci/assert-no-skips.py "$RUNNER_TEMP/live.xml"
       - name: Build and start web (local API)
@@ -316,6 +375,22 @@ jobs:
         id: chromium
         if: ${{ !cancelled() && steps.web.outcome == 'success' }}
         run: python -m playwright install --with-deps chromium
+      - name: Prepare two native Studio sessions (Issue #29)
+        id: native_fixture
+        if: ${{ !cancelled() && steps.chromium.outcome == 'success' }}
+        env:
+          SYNORA_QA_WEB_URL: http://127.0.0.1:3000
+        run: |
+          set -euo pipefail
+          source infrastructure/ci/fixture-env.sh
+          export SYNORA_QA_FIXTURE_POSTS=1 SYNORA_QA_API_URL="$API_PUBLIC_URL"
+          test -f tests/e2e/setup_ci_fixture.sh || { echo "::error::Issue #29 fixture setup is missing"; exit 1; }
+          source tests/e2e/setup_ci_fixture.sh
+          python infrastructure/ci/validate-browser-fixture.py
+          # Persist paths and public identifiers only; credentials remain masked/private.
+          for name in SYNORA_QA_FIXTURE_PAGE_URL SYNORA_QA_STORAGE_STATE SYNORA_QA_STORAGE_STATE_B SYNORA_QA_FIXTURE_JOB_ID; do
+            printf '%s=%s\n' "$name" "${!name}" >> "$GITHUB_ENV"
+          done
       - name: Strict browser acceptance (no skips)
         if: ${{ !cancelled() && steps.chromium.outcome == 'success' }}
         env:
@@ -325,13 +400,21 @@ jobs:
         run: |
           source infrastructure/ci/fixture-env.sh
           export SYNORA_QA_FIXTURE_POSTS=1 SYNORA_QA_API_URL="$API_PUBLIC_URL"
-          # Run the full suite even if persisted Studio fixture setup is missing.
-          # Strict tests themselves will fail on missing configuration; never skip.
-          if [ -f tests/e2e/setup_ci_fixture.sh ]; then
-            source tests/e2e/setup_ci_fixture.sh
-          fi
+          # Run every browser test even if fixture preparation failed.
+          # The preparation step stays a hard failure; strict tests also fail closed.
           python -m pytest -q -rs tests/e2e --junitxml="$RUNNER_TEMP/browser.xml"
           python infrastructure/ci/assert-no-skips.py "$RUNNER_TEMP/browser.xml"
+      - name: Collect integrated-evidence counts only
+        if: always()
+        run: python3.12 infrastructure/ci/evidence.py junit "$RUNNER_TEMP/integrated-evidence/summary.json" "$RUNNER_TEMP/contracts.xml" "$RUNNER_TEMP/live.xml" "$RUNNER_TEMP/browser.xml"
+      - name: Upload integrated-evidence (sanitized)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: integrated-evidence
+          path: ${{ runner.temp }}/integrated-evidence/summary.json
+          retention-days: 7
+          if-no-files-found: error
       - name: Remove disposable database
         if: always()
         run: docker rm -f -v synora-ci-db || test -z "$(docker ps -aq --filter name=^/synora-ci-db$)"

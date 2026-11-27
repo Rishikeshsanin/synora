@@ -11,13 +11,13 @@ export SYNORA_REAL_GENERATION_ENABLED=false SYNORA_REAL_MUSIC_APPROVED=0
 if [ ! -f "$RUNNER_TEMP/synora-fixture.env" ]; then
   (umask 077; python3.12 - <<'PY' > "$RUNNER_TEMP/synora-fixture.env"
 import json, secrets, shlex
-a, b = secrets.token_hex(24), secrets.token_hex(24)
+a, b, live_a, live_b = (secrets.token_hex(24) for _ in range(4))
 key = secrets.token_hex(32)
-tokens = {a:"11111111-1111-4111-8111-111111111111",b:"22222222-2222-4222-8222-222222222222"}
-for name, value in {"MEDIA_SIGNING_KEY":key,"SYNORA_QA_TOKEN_A":a,"SYNORA_QA_TOKEN_B":b,"FIXTURE_TOKENS_JSON":json.dumps(tokens)}.items():
+tokens = {a:"11111111-1111-4111-8111-111111111111",b:"22222222-2222-4222-8222-222222222222",live_a:"33333333-3333-4333-8333-333333333333",live_b:"44444444-4444-4444-8444-444444444444"}
+for name, value in {"MEDIA_SIGNING_KEY":key,"SYNORA_QA_TOKEN_A":a,"SYNORA_QA_TOKEN_B":b,"SYNORA_QA_LIVE_TOKEN_A":live_a,"SYNORA_QA_LIVE_TOKEN_B":live_b,"FIXTURE_TOKENS_JSON":json.dumps(tokens)}.items():
     print("export " + name + "=" + shlex.quote(value))
 PY
   )
 fi
 source "$RUNNER_TEMP/synora-fixture.env"
-printf '::add-mask::%s\n' "$MEDIA_SIGNING_KEY" "$SYNORA_QA_TOKEN_A" "$SYNORA_QA_TOKEN_B" "$FIXTURE_TOKENS_JSON"
+printf '::add-mask::%s\n' "$MEDIA_SIGNING_KEY" "$SYNORA_QA_TOKEN_A" "$SYNORA_QA_TOKEN_B" "$SYNORA_QA_LIVE_TOKEN_A" "$SYNORA_QA_LIVE_TOKEN_B" "$FIXTURE_TOKENS_JSON"
