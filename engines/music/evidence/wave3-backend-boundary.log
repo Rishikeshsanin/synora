@@ -1,0 +1,7 @@
+Pydantic 2.13.5
+instrumental None PASS, duration 15.0 bytes 480044 tamper rejected
+vocals en PASS, duration 15.0 bytes 480044 tamper rejected
+vocals te PASS, duration 15.0 bytes 480044 tamper rejected
+vocals hi PASS, duration 15.0 bytes 480044 tamper rejected
+shared capability flags PASS
+API/engine acceptance parity: 9 boundary cases PASS
