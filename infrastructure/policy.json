@@ -1,0 +1,11 @@
+{
+  "real_generation_enabled": false,
+  "monthly_budget_microusd": 0,
+  "max_job_microusd": 0,
+  "max_concurrent_gpu_jobs": 0,
+  "max_attempts": 2,
+  "max_duration_seconds": 120,
+  "gpu_timeout_seconds": 180,
+  "signed_url_ttl_seconds": 300,
+  "max_upload_bytes": 20971520
+}

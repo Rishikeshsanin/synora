@@ -1,0 +1,10 @@
+**
+!app/
+!app/**
+!requirements.lock
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/__pycache__
+**/*.pyc

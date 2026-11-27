@@ -1,0 +1,19 @@
+name: synora-local
+services:
+  postgres:
+    image: postgres:17.6
+    environment:
+      POSTGRES_DB: synora_dev
+      POSTGRES_USER: synora_dev
+      POSTGRES_PASSWORD: ${SYNORA_LOCAL_DB_PASSWORD:?Set a local-only password}
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - synora_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U synora_dev -d synora_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+volumes:
+  synora_pgdata:
