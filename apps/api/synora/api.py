@@ -6,9 +6,10 @@ import shutil
 import os
 from datetime import datetime, timezone
 from typing import Annotated, NoReturn
+from collections.abc import Mapping
 from uuid import UUID, uuid4
 import httpx
-from fastapi import FastAPI, Depends, Header, Query
+from fastapi import FastAPI, Depends, Header, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,8 +26,22 @@ app=FastAPI(title="Synora",version="0.1.0",docs_url=None if settings.environment
 if settings.cors_origins:
     app.add_middleware(CORSMiddleware,allow_origins=settings.cors_origins.split(","),allow_methods=["GET","POST"],allow_headers=["Authorization","Content-Type","Idempotency-Key"])
 
-def error(request,status,code,message):
-    return JSONResponse(status_code=status,content={"code":code,"message":message,"request_id":getattr(request.state,"request_id",str(uuid4()))})
+class ApiError(HTTPException):
+    """Public, sanitized error with Starlette-compatible string detail."""
+    def __init__(self, status: int, code: str, message: str) -> None:
+        super().__init__(status_code=status, detail=message)
+        self.code = code
+        self.public_message = message
+
+
+def error(request: Request, status: int, code: str, message: str,
+          headers: Mapping[str, str] | None = None) -> JSONResponse:
+    request_id = getattr(request.state, "request_id", str(uuid4()))
+    return JSONResponse(
+        status_code=status,
+        content={"code": code, "message": message, "request_id": request_id},
+        headers={**(headers or {}), "X-Request-ID": request_id, "Cache-Control": "no-store"},
+    )
 
 @app.middleware("http")
 async def trace(request,call_next):
@@ -49,16 +64,18 @@ async def trace(request,call_next):
     return response
 
 @app.exception_handler(HTTPException)
-async def http_error(request,exc):
-    code,message=exc.detail if isinstance(exc.detail,tuple) else ("http_error","Request failed")
-    return error(request,exc.status_code,code,message)
+async def http_error(request: Request, exc: HTTPException) -> JSONResponse:
+    if isinstance(exc, ApiError):
+        return error(request, exc.status_code, exc.code, exc.public_message, exc.headers)
+    # Framework errors keep their status and protocol headers, never raw detail.
+    return error(request, exc.status_code, "http_error", "Request failed", exc.headers)
 
 @app.exception_handler(RequestValidationError)
 async def invalid(request,exc):
     return error(request,422,"invalid_request","Request validation failed")
 
 def abort(status: int, code: str, message: str) -> NoReturn:
-    raise HTTPException(status,detail=(code,message))
+    raise ApiError(status, code, message)
 
 def user(authorization: Annotated[str|None,Header()]=None):
     if not authorization or not authorization.startswith("Bearer ") or len(authorization)>8192:
