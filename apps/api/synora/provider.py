@@ -4,7 +4,7 @@ from pathlib import Path
 import hashlib
 import math
 import wave
-from engines.music.core import MusicSpec as EngineSpec, MusicOutput, GenerationContext, MusicError
+from engines.music.core import MusicSpec as EngineSpec, MusicOutput, MusicError
 from engines.music.providers import FixtureProvider
 from engines.music.audio import MAX_AUDIO_BYTES
 from .models import MusicSpec

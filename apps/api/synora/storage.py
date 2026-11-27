@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import os
+import re
 import time
 from urllib.parse import quote
 from uuid import UUID
@@ -14,9 +15,9 @@ def local_path(key):
 
 def put_local(key, data):
     path=local_path(key)
-    path.parent.mkdir(parents=True,exist_ok=True)
+    path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
     temporary=path.with_suffix(".tmp")
-    with temporary.open("wb") as f:
+    with os.fdopen(os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as f:
         f.write(data)
         f.flush()
         os.fsync(f.fileno())
@@ -33,7 +34,7 @@ def local_url(asset, expiry, download=False):
     return f"{settings.public_url}/v1/media/{asset}?expires={expiry}&download={int(download)}&sig={sig}"
 
 def valid_signature(asset, expiry, download, sig):
-    return bool(settings.signing_key) and time.time() < expiry <= time.time()+300 and hmac.compare_digest(signature(asset,expiry,download),sig)
+    return bool(settings.signing_key) and bool(re.fullmatch(r'[0-9a-f]{64}',sig)) and time.time() < expiry <= time.time()+300 and hmac.compare_digest(signature(asset,expiry,download),sig)
 
 class SupabaseStorage:
     """Server-only adapter; bucket must be explicitly provisioned private."""

@@ -65,7 +65,7 @@ def user(authorization: Annotated[str|None,Header()]=None):
     token=authorization[7:]
     if settings.environment in ("local","test") and settings.provider=="fixture":
         for expected, uid in json.loads(settings.fixture_tokens).items():
-            if expected and secrets.compare_digest(expected,token): return UUID(uid)
+            if expected and secrets.compare_digest(expected.encode(),token.encode()): return UUID(uid)
     if not settings.supabase_url or not settings.supabase_key:
         abort(401,"unauthorized","Invalid token")
     try:

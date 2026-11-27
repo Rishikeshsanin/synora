@@ -4,11 +4,11 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 Tag = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
 class MusicSpec(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    prompt: str = Field(min_length=1, max_length=1200)
+    prompt: str = Field(min_length=1, max_length=2000)
     mode: Literal["instrumental", "vocals"]
     genres: list[Tag] = Field(max_length=12)
     moods: list[Tag] = Field(max_length=12)
-    instruments: list[Tag] = Field(max_length=20)
+    instruments: list[Tag] = Field(max_length=12)
     duration_seconds: int = Field(ge=15, le=120, strict=True)
     bpm: int | None = Field(default=None, ge=40, le=200, strict=True)
     lyrics: str | None = Field(default=None, min_length=1, max_length=6000)
