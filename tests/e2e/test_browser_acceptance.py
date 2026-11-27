@@ -71,3 +71,34 @@ def test_existing_fixture_playback_download_and_disclosure(browser):
         assert artifact.path().stat().st_size > 0
     finally:
         context.close()
+
+
+def test_candidate_frontend_local_preview(browser):
+    """PR #9 dc439e8: explicitly simulated, no server job or provider call."""
+    instance, url = browser
+    context = instance.new_context(accept_downloads=True)
+    try:
+        page = context.new_page()
+        posts = []
+        page.on('request', lambda request: posts.append(request.url)
+                if request.method == 'POST' and '/v1/music/jobs' in request.url else None)
+        response = page.goto(url.rstrip('/') + '/studio', wait_until='domcontentloaded')
+        assert response and response.ok
+        page.get_by_label('Explicit local demo').check()
+        page.get_by_label('Describe your sound').fill('Original QA fixture preview')
+        page.get_by_role('button', name='Play local fixture').click()
+        expect(page.get_by_text('SIMULATED · Not AI-generated', exact=False)).to_be_visible()
+        audio = page.locator('audio')
+        expect(audio).to_have_count(1)
+        audio.evaluate('a => a.play()')
+        page.wait_for_function("document.querySelector('audio').currentTime > 0")
+        with page.expect_download(timeout=15000) as download:
+            page.get_by_role('button', name='Download audio').click()
+        artifact = download.value
+        assert artifact.failure() is None
+        with artifact.path().open('rb') as f:
+            header = f.read(12)
+        assert header[:4] == b'RIFF' and header[8:12] == b'WAVE'
+        assert not posts, 'Local demo must not submit a provider job'
+    finally:
+        context.close()
