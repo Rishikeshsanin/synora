@@ -19,3 +19,6 @@ For real auth set SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY and use access token ve
 - Project create/list endpoints are proposed extensions; project-to-job association, account deletion lifecycle, list pagination, distributed global request throttling, and production worker heartbeat/real provider are pending. Existing admission limits are per-owner (5/min and 3 active).
 - No PostgreSQL, Supabase CLI, Docker or Python 3.12 available in authoring runtime. Full migration/RLS, concurrency, API tests and dependency auditing remain mandatory before merge.
 - No root files, other agents' paths or live resources touched.
+
+## Verified checkpoint
+16 unit cases passed on Python 3.13.5 / Pydantic 2.13.5 / pytest 9.0.2 / httpx 0.28.1 in an isolated environment, using six byte-identical Git blobs from e4f77de. Command: `python -m pytest -q tests/test_models_provider.py tests/test_security.py`. This is not Python 3.12 or pinned-version CI evidence. Full API/DB tests not run. Docker access logs disabled by default; upstream proxy logging must still be configured to redact signed URLs.

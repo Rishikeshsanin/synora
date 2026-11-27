@@ -32,8 +32,8 @@ async def trace(request,call_next):
         # Enforce actual received bytes, not just an untrusted Content-Length.
         body=bytearray()
         async for chunk in request.stream():
+            if len(body)+len(chunk)>32768: return error(request,413,"body_too_large","Request too large")
             body.extend(chunk)
-            if len(body)>32768: return error(request,413,"body_too_large","Request too large")
         request._body=bytes(body)
     try:
         response=await call_next(request)
@@ -76,7 +76,7 @@ def user(authorization: Annotated[str|None,Header()]=None):
         abort(503,"auth_unavailable","Authentication unavailable")
 
 def job_view(row):
-    if not row: abort(404,"not_found","Job not found")
+    if not row or (row["simulated"] and settings.environment=="production"): abort(404,"not_found","Job not found")
     return {k:row[k] for k in ("id","status","progress","asset_id","error","created_at","updated_at","provider","simulated")}
 
 @app.get("/health")
