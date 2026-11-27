@@ -32,16 +32,16 @@ class MusicSpec:
             raise ValueError("bpm must be 40–200")
         for name in ("genres", "moods", "instruments"):
             values = getattr(self, name)
-            if not isinstance(values, (list, tuple)) or len(values) > (20 if name == "instruments" else 12) or any(
+            if not isinstance(values, (list, tuple)) or len(values) > 12 or any(
                 not isinstance(v, str) or not 1 <= len(v.strip()) <= 64 for v in values
             ):
                 raise ValueError("invalid " + name)
             object.__setattr__(self, name, tuple(v.strip() for v in values))
-        if self.lyrics is not None and (not isinstance(self.lyrics, str) or len(self.lyrics.strip()) > 6000):
+        if self.lyrics is not None and (not isinstance(self.lyrics, str) or not 1 <= len(self.lyrics.strip()) <= 6000):
             raise ValueError("invalid lyrics")
         if self.lyrics is not None:
-            object.__setattr__(self, "lyrics", self.lyrics.strip() or None)
-        if self.language is not None and (not isinstance(self.language, str) or not 1 <= len(self.language.strip()) <= 64):
+            object.__setattr__(self, "lyrics", self.lyrics.strip())
+        if self.language is not None and (not isinstance(self.language, str) or not 1 <= len(self.language.strip()) <= 32):
             raise ValueError("invalid language")
         if self.language is not None:
             object.__setattr__(self, "language", self.language.strip())
@@ -114,7 +114,7 @@ class GenerationContext:
     def authorize(self, capability, estimate):
         self.remaining()
         if self.production:
-            raise MusicError("music generation disabled in production during Wave 2")
+            raise MusicError("music generation disabled in production")
         if not capability.simulated and (not self.allow_real or estimate is None or estimate <= 0 or not math.isfinite(estimate) or estimate > self.budget_usd):
             raise MusicError("real inference requires approved bounded budget")
         self.output_dir.mkdir(parents=True, exist_ok=True)
