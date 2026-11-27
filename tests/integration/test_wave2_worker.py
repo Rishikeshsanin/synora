@@ -112,11 +112,11 @@ def test_rejected_settlement_does_not_leave_orphan(stack, monkeypatch):
     db, worker, storage, client, a, _ = stack
     job = submit(client,a)
     actual_complete = db.complete
-    def cancel_before_complete(job_id, token, key, duration, provenance):
+    def cancel_before_complete(job_id, token, key, duration, provenance, *args, **kwargs):
         with db.db() as c:
             owner = c.execute("select user_id from synora.jobs where id=%s",(job_id,)).fetchone()["user_id"]
         db.cancel(owner,job_id)
-        return actual_complete(job_id,token,key,duration,provenance)
+        return actual_complete(job_id,token,key,duration,provenance,*args,**kwargs)
     monkeypatch.setattr(db,"complete",cancel_before_complete)
     assert worker.run_one()
     assert state(db,job)["status"] == "cancelled"
