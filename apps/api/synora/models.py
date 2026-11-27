@@ -8,15 +8,15 @@ class MusicSpec(BaseModel):
     mode: Literal["instrumental", "vocals"]
     genres: list[Tag] = Field(max_length=12)
     moods: list[Tag] = Field(max_length=12)
-    instruments: list[Tag] = Field(max_length=20)
+    instruments: list[Tag] = Field(max_length=12)
     duration_seconds: int = Field(ge=15, le=120, strict=True)
     bpm: int | None = Field(default=None, ge=40, le=200, strict=True)
-    lyrics: str | None = Field(default=None, max_length=6000)
-    language: Tag | None = None
+    lyrics: str | None = Field(default=None, min_length=1, max_length=6000)
+    language: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=32)] | None = None
 
     @model_validator(mode="after")
     def check_lyrics(self):
-        if self.mode == "instrumental" and self.lyrics:
+        if self.mode == "instrumental" and self.lyrics is not None:
             raise ValueError("instrumental jobs cannot include lyrics")
         return self
 

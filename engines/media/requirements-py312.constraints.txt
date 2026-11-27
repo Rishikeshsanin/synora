@@ -1,0 +1,28 @@
+# Candidate exact transitive pins from the tested Python 3.13 environment.
+# Python 3.12 clean resolution and wheel hashes NOT verified; see WAVE2.md.
+audioread==3.1.0
+certifi==2026.5.20
+cffi==2.0.0
+charset-normalizer==3.4.7
+decorator==5.3.1
+idna==3.17
+joblib==1.5.3
+lazy-loader==0.5
+librosa==0.11.0
+llvmlite==0.47.0
+msgpack==1.1.2
+numba==0.65.1
+numpy==2.3.5
+packaging==25.0
+pillow==12.3.0
+platformdirs==4.10.0
+pooch==1.9.0
+pycparser==3.0
+requests==2.32.5
+scikit-learn==1.8.0
+scipy==1.17.0
+soundfile==0.13.1
+soxr==1.0.0
+threadpoolctl==3.6.0
+typing-extensions==4.16.0
+urllib3==2.7.0

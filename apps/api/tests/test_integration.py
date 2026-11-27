@@ -9,7 +9,12 @@ if os.getenv("SYNORA_DISPOSABLE_DB")!="1":
 from synora import db
 from synora.worker import run_one
 from synora.config import settings
-from synora.api import app, user
+from synora.api import app
+from synora import api
+from dataclasses import replace
+import json
+import time
+from urllib.parse import urlsplit, parse_qs
 from fastapi.testclient import TestClient
 
 SPEC=dict(prompt="Original melody",mode="instrumental",genres=[],moods=[],instruments=[],duration_seconds=15,bpm=None,lyrics=None,language=None)
@@ -57,24 +62,75 @@ def test_expired_fencing_and_retry():
     db.cancel(uid,job["id"])
     assert not db.progress(job["id"],new["lease_token"],90)
 
-def test_api_fixture_playback_and_cross_owner():
-    uid=uuid4()
-    app.dependency_overrides[user]=lambda:uid
+def test_api_fixture_playback_and_cross_owner(monkeypatch):
+    uid, other=uuid4(),uuid4()
+    tokens={str(uuid4()):str(uid),str(uuid4()):str(other)}
+    token_a,token_b=tokens
+    monkeypatch.setattr(api,"settings",replace(settings,fixture_tokens=json.dumps(tokens),
+                                              supabase_url="",supabase_key=""))
     client=TestClient(app)
-    try:
-        res=client.post("/v1/music/jobs",json=SPEC,headers={"Idempotency-Key":"api"})
-        assert res.status_code==202,res.text
-        job=res.json()["id"]
-        assert run_one()
-        completed=client.get(f"/v1/jobs/{job}").json()
-        assert completed["status"]=="succeeded" and completed["simulated"]
-        asset=completed["asset_id"]
-        meta=client.get(f"/v1/assets/{asset}").json()
-        assert meta["simulated"] and meta["mime_type"]=="audio/wav"
-        assert client.get(meta["url"]).content[:4]==b"RIFF"
-        assert client.get(meta["url"]+"bad").status_code==403
-        app.dependency_overrides[user]=lambda:uuid4()
-        assert client.get(f"/v1/jobs/{job}").status_code==404
-        assert client.get(f"/v1/assets/{asset}").status_code==404
-    finally:
-        app.dependency_overrides.clear()
+    a={"Authorization":f"Bearer {token_a}"}
+    b={"Authorization":f"Bearer {token_b}"}
+    assert client.get("/health").status_code==200
+    assert client.get("/ready").status_code==200
+    assert client.get("/v1/music/capabilities").json()["simulated"] is True
+    assert client.post("/v1/music/jobs",json=SPEC,headers={"Idempotency-Key":"missing"}).status_code==401
+    assert client.post("/v1/music/jobs",json=SPEC,headers={"Authorization":"Bearer bogus","Idempotency-Key":"invalid"}).status_code==401
+    res=client.post("/v1/music/jobs",json=SPEC,headers=a|{"Idempotency-Key":"api"})
+    assert res.status_code==202,res.text
+    job=res.json()["id"]
+    same=client.post("/v1/music/jobs",json=SPEC,headers=a|{"Idempotency-Key":"api"})
+    assert same.json()["id"]==job
+    assert client.post("/v1/music/jobs",json=SPEC|{"prompt":"different"},headers=a|{"Idempotency-Key":"api"}).status_code==409
+    assert client.get(f"/v1/jobs/{job}",headers=b).status_code==404
+    assert client.post(f"/v1/jobs/{job}/cancel",headers=b).status_code==404
+    assert run_one()
+    completed=client.get(f"/v1/jobs/{job}",headers=a).json()
+    assert completed["status"]=="succeeded" and completed["simulated"] and completed["progress"]==100
+    asset=completed["asset_id"]
+    meta=client.get(f"/v1/assets/{asset}",headers=a).json()
+    assert meta["simulated"] and meta["mime_type"]=="audio/wav"
+    assert client.get(meta["url"]).content[:4]==b"RIFF"
+    assert client.get(meta["url"]+"bad").status_code==403
+    assert client.get(f"/v1/assets/{asset}",headers=b).status_code==404
+    dl=client.get(f"/v1/assets/{asset}?download=true",headers=a).json()
+    assert "attachment" in client.get(dl["url"]).headers["content-disposition"]
+    assert client.get(dl["url"].replace("download=1","download=0")).status_code==403
+    from synora.storage import local_url
+    assert client.get(local_url(asset,int(time.time())-1)).status_code==403
+    with db.db() as c:
+        assert c.execute("select status from synora.credit_reservations where job_id=%s",(job,)).fetchone()["status"]=="settled"
+        record=c.execute("select provenance from synora.assets where id=%s",(asset,)).fetchone()["provenance"]
+        assert record["model"]=="procedural-tone" and record["estimated_cost_usd"]==0
+    # The same idempotency key is scoped to the second owner.
+    other_job=client.post("/v1/music/jobs",json=SPEC,headers=b|{"Idempotency-Key":"api"}).json()["id"]
+    assert other_job!=job
+    assert client.post(f"/v1/jobs/{other_job}/cancel",headers=b).json()["status"]=="cancelled"
+
+def test_attempt_exhaustion_releases_credit():
+    uid=uuid4()
+    job=db.submit(uid,"retry",SPEC)
+    for attempt in range(1,4):
+        row=db.claim()
+        assert row["id"]==job["id"] and row["attempts"]==attempt
+        db.fail(job["id"],row["lease_token"])
+        with db.db() as c:
+            c.execute("update synora.jobs set available_at=now() where id=%s",(job["id"],))
+    assert db.owned_job(uid,job["id"])["status"]=="failed"
+    with db.db() as c:
+        assert c.execute("select status from synora.credit_reservations where job_id=%s",(job["id"],)).fetchone()["status"]=="released"
+
+def test_worker_cancel_mid_generation(monkeypatch):
+    from synora import worker
+    from synora.storage import local_path
+    uid=uuid4()
+    job=db.submit(uid,"during",SPEC)
+    original=worker.FixtureProvider.generate
+    def generate(provider,spec,context):
+        db.cancel(uid,job["id"])
+        return original(provider,spec,context)
+    monkeypatch.setattr(worker.FixtureProvider,"generate",generate)
+    assert run_one()
+    row=db.owned_job(uid,job["id"])
+    assert row["status"]=="cancelled" and row["asset_id"] is None
+    assert not (settings.media_dir / str(uid) / str(job["id"])).exists()

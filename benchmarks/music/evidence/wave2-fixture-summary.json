@@ -1,0 +1,86 @@
+{
+  "python": "3.13.5",
+  "ffmpeg": "7.1.5-0+deb13u1",
+  "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "simulated": true,
+  "seed": 42,
+  "repeats": 1,
+  "prompt_sha256": "a365ec1e462b1251cdc67b65a0a3a05b502c5a1be9a75f6f5918ee16ce425341",
+  "cases": 9,
+  "succeeded": 9,
+  "requested_seconds": 330,
+  "decoded_seconds": 330,
+  "max_duration_error_seconds": 0,
+  "total_bytes": 10560396,
+  "median_latency_seconds": 0.3649902860000793,
+  "estimated_cost_usd": 0,
+  "quality_score": null,
+  "prompt_adherence_score": null,
+  "gpu_peak_vram_bytes": null,
+  "actual_cost_usd": null,
+  "case_results": [
+    {
+      "case_id": "english-pop",
+      "latency_seconds_rounded": 0.3797,
+      "sha256": "05ed9df0a7125d0265239b3c48cda30db4b172f50aaebb9f0f3868ab4974cd1e",
+      "status": "succeeded",
+      "simulated": true
+    },
+    {
+      "case_id": "telugu-song",
+      "latency_seconds_rounded": 0.3738,
+      "sha256": "26c82965c7de9878f8244b159df2c551ad8bf4e68e4ab57c9b7531ae931c22b3",
+      "status": "succeeded",
+      "simulated": true
+    },
+    {
+      "case_id": "hindi-song",
+      "latency_seconds_rounded": 0.3479,
+      "sha256": "cda2510e56b5d1ec3eccb89f72d4212c9bd36192d4396f919bd945626a31bfcb",
+      "status": "succeeded",
+      "simulated": true
+    },
+    {
+      "case_id": "indian-classical",
+      "latency_seconds_rounded": 0.3417,
+      "sha256": "87720154ba75d38bf6eabe50ed190e7989e66cf57c0a32b121c526a42a74974f",
+      "status": "succeeded",
+      "simulated": true
+    },
+    {
+      "case_id": "cinematic",
+      "latency_seconds_rounded": 0.3496,
+      "sha256": "6fcf4d55a898b8e10be269ec428fbfc8e3d3e289f9417e75b05e8f1125cd8adf",
+      "status": "succeeded",
+      "simulated": true
+    },
+    {
+      "case_id": "edm",
+      "latency_seconds_rounded": 0.3504,
+      "sha256": "c47877b867882b66a9845bea9e9220d4a21d93b45fc0b6dda4413c7488beb46c",
+      "status": "succeeded",
+      "simulated": true
+    },
+    {
+      "case_id": "advertising",
+      "latency_seconds_rounded": 0.3895,
+      "sha256": "e6fa597005719679b99d5b9381fbd272cc0939547322350173cdb6f16594f344",
+      "status": "succeeded",
+      "simulated": true
+    },
+    {
+      "case_id": "text-to-vocals",
+      "latency_seconds_rounded": 0.365,
+      "sha256": "16f6d9a439619555ceba03cdab8d4d6cff1e6517e8f05fb64caa06436a707bf6",
+      "status": "succeeded",
+      "simulated": true
+    },
+    {
+      "case_id": "long-cinematic",
+      "latency_seconds_rounded": 0.7909,
+      "sha256": "88be3becc32620bf3107b496ed307f218f895b0dccae33981cb5d66af1e1c2d9",
+      "status": "succeeded",
+      "simulated": true
+    }
+  ]
+}
