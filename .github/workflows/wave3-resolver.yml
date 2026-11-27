@@ -1,0 +1,69 @@
+name: Wave 3 targeted dependency resolution
+on:
+  push:
+    branches: ['agent/devops/resolve-wave3']
+permissions:
+  contents: read
+concurrency:
+  group: synora-wave3-resolver
+  cancel-in-progress: true
+jobs:
+  npm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Resolve reviewed exact npm candidates
+        working-directory: apps/web
+        run: |
+          set -euo pipefail
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          python3 -c 'import pathlib; print("\n".join("SYNORA_LOCK_LINE "+line for line in pathlib.Path("package-lock.json").read_text().splitlines()))'
+      - name: Audit actual candidate lock (blocking)
+        working-directory: apps/web
+        run: |
+          npm ci --ignore-scripts
+          npm audit --audit-level=high
+  python:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [api-runtime, api-dev, media]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Isolated resolver
+        run: |
+          python3.12 -m venv "$RUNNER_TEMP/resolver"
+          "$RUNNER_TEMP/resolver/bin/pip" install --require-hashes -r infrastructure/ci/pip.lock
+          "$RUNNER_TEMP/resolver/bin/pip" install pip-tools==7.5.0
+      - name: Resolve reviewed exact candidates
+        env:
+          COMPONENT: ${{ matrix.component }}
+        run: |
+          set -euo pipefail
+          case "$COMPONENT" in
+            api-runtime) cp apps/api/requirements.txt "$RUNNER_TEMP/requirements.in" ;;
+            api-dev) cat apps/api/requirements.txt > "$RUNNER_TEMP/requirements.in"; printf 'pytest==9.0.3\nruff==0.12.2\nmypy==1.16.1\npip-audit==2.9.0\n' >> "$RUNNER_TEMP/requirements.in" ;;
+            media) cat engines/media/requirements.txt > "$RUNNER_TEMP/requirements.in"; printf 'ruff==0.12.2\nmypy==1.16.1\npip-audit==2.9.0\n' >> "$RUNNER_TEMP/requirements.in" ;;
+          esac
+          "$RUNNER_TEMP/resolver/bin/pip-compile" --allow-unsafe --generate-hashes --no-emit-index-url --no-emit-trusted-host --output-file="$RUNNER_TEMP/candidate.lock" "$RUNNER_TEMP/requirements.in"
+          python3 -c 'import pathlib,os; print("\n".join("SYNORA_LOCK_LINE "+line for line in (pathlib.Path(os.environ["RUNNER_TEMP"])/"candidate.lock").read_text().splitlines()))'
+      - name: Verify clean installation and locked environment
+        run: |
+          python3.12 -m venv "$RUNNER_TEMP/verify"
+          "$RUNNER_TEMP/verify/bin/pip" install --require-hashes -r infrastructure/ci/pip.lock
+          "$RUNNER_TEMP/verify/bin/pip" install --require-hashes -r "$RUNNER_TEMP/candidate.lock"
+          "$RUNNER_TEMP/verify/bin/pip" check
+      - name: Audit candidate (blocking)
+        if: matrix.component != 'api-runtime'
+        run: |
+          "$RUNNER_TEMP/verify/bin/python" -m pip_audit --strict
