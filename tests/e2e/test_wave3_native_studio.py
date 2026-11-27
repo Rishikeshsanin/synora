@@ -68,7 +68,8 @@ def test_native_studio_two_authenticated_users():
                 result = submission.value
                 assert result.status == 202
                 # Compare privately; avoid printing credentials or signed URLs.
-                assert result.request.headers.get("authorization") == "Bearer " + (token_a, token_b)[index], "Unexpected authenticated principal"
+                if result.request.all_headers().get("authorization") != "Bearer " + (token_a, token_b)[index]:
+                    pytest.fail("Unexpected authenticated principal", pytrace=False)
                 job = result.json()["id"]
                 jobs.append(job)
                 expect(page.get_by_text("Server fixture · Not AI-generated", exact=False).first).to_be_visible(timeout=90000)
