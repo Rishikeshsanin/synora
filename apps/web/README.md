@@ -1,0 +1,9 @@
+# Synora web / Issue #1
+
+Greenfield Next.js app. Run from apps/web: npm install, npm test, npm run typecheck, npm run build, npm run dev. Open / and /studio. Copy .env.example to .env.local; use the authorized Supabase public URL and anon key, and backend URL. Configure Supabase magic-link redirect to /studio. Never put a service role key into browser variables.
+
+The explicit local demo plays a fixed, original synthesized 15-second tone sequence (not AI, not prompt-responsive). No fallback from the real API. Real API requests require Supabase bearer token; idempotency retained for ambiguous submission failure; bounded polling, recovery, signed asset refresh and provenance checks. The server job is not cancelled by stopping polling. Library is current session only; no list endpoint in contract. API simulator results retain simulation labeling. Actual provider control adherence is unknown.
+
+Design: editorial serif type, tactile record artwork, olive/cream palette, restrained motion, responsive workspace, native form and audio controls. Browser visual QA, component tests and production build remain required. npm and GitHub DNS unavailable in local runner, so package installation and full app verification blocked. Node 22.16.0 contract tests passed 8/8 on exact module/test content; verify blob hashes against local evidence. No lockfile generated; integrator must coordinate lockfile and dependency/security audit, and CI before merge.
+
+Manual QA: check / and /studio at 320, 390, 768, 1366px; keyboard traversal and focus; light/dark, reduced motion; demo labels, native playback, waveform and WAV download; auth sign-in/out and account switch; API job queued/running/succeeded/failed/cancelled; network loss, resume, asset expiry and CORS; no silent mock fallback. Check actual provider capabilities with backend and request a server-side library listing contract. No deployment performed.
