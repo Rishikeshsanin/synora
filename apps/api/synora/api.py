@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Annotated, NoReturn
 from uuid import UUID, uuid4
 import httpx
-from fastapi import FastAPI, Depends, Header
+from fastapi import FastAPI, Depends, Header, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -134,14 +134,32 @@ def get_job(id:UUID,uid:Annotated[UUID,Depends(user)]): return job_view(db.owned
 @app.post("/v1/jobs/{id}/cancel")
 def cancel(id:UUID,uid:Annotated[UUID,Depends(user)]): return job_view(db.cancel(uid,id))
 
-@app.get("/v1/assets/{id}")
-def asset(id:UUID,uid:Annotated[UUID,Depends(user)],download:bool=False):
-    row=db.owned_asset(uid,id)
+def asset_view(row, download=False):
     if not row or (row["simulated"] and settings.environment=="production"):
         abort(404,"not_found","Asset not found")
     expiry=int(time.time())+300
-    url=local_url(id,expiry,download) if row["simulated"] else SupabaseStorage().sign(row["storage_key"],download)
+    asset_id=UUID(str(row["id"]))
+    url=local_url(asset_id,expiry,download) if row["simulated"] else SupabaseStorage().sign(row["storage_key"],download)
     return {**{k:row[k] for k in ("id","kind","mime_type","duration_seconds","simulated")},"url":url,"expires_at":datetime.fromtimestamp(expiry,timezone.utc)}
+
+@app.get("/v1/assets/{id}")
+def asset(id:UUID,uid:Annotated[UUID,Depends(user)],download:bool=False):
+    return asset_view(db.owned_asset(uid,id),download)
+
+@app.get("/v1/music/library")
+def library(uid:Annotated[UUID,Depends(user)],
+            limit:Annotated[int,Query(ge=1,le=100)]=30,
+            cursor:UUID|None=None):
+    try:
+        rows=db.music_library(uid,limit,cursor,settings.environment!="production")
+    except ValueError:
+        abort(422,"invalid_cursor","Invalid library cursor")
+    items=[]
+    for row in rows[:limit]:
+        joined=row["joined_asset"]
+        items.append({"job":job_view(row),"asset":asset_view(joined) if joined["id"] else None,
+                      "prompt":row["spec"]["prompt"]})
+    return {"items":items,"next_cursor":rows[limit-1]["id"] if len(rows)>limit else None}
 
 @app.get("/v1/media/{id}")
 def media(id:UUID,expires:int,download:bool,sig:str):
