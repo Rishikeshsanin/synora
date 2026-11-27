@@ -7,8 +7,10 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from .config import settings
 
-class Conflict(Exception): pass
-class RateLimited(Exception): pass
+class Conflict(Exception):
+    pass
+class RateLimited(Exception):
+    pass
 
 @contextmanager
 def db():
@@ -26,12 +28,14 @@ def submit(user, key, spec):
         c.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (str(user),))
         old = c.execute("select * from synora.jobs where user_id=%s and idempotency_key=%s", (user,key)).fetchone()
         if old:
-            if old["request_hash"] != digest: raise Conflict()
+            if old["request_hash"] != digest:
+                raise Conflict()
             return old
         counts = c.execute("""select count(*) filter (where created_at > now()-interval '1 minute') as recent,
             count(*) filter (where status in ('queued','running')) as active
             from synora.jobs where user_id=%s""", (user,)).fetchone()
-        if counts["recent"] >= 5 or counts["active"] >= 3: raise RateLimited()
+        if counts["recent"] >= 5 or counts["active"] >= 3:
+            raise RateLimited()
         row = c.execute("""insert into synora.jobs(user_id,spec,idempotency_key,request_hash,simulated,provider)
             values(%s,%s,%s,%s,true,'fixture') returning *""", (user,Jsonb(spec),key,digest)).fetchone()
         c.execute("insert into synora.credit_reservations(job_id) values(%s)", (row["id"],))
@@ -80,11 +84,13 @@ def progress(job, token, value):
             (min(99,max(0,value)),job,token)).rowcount == 1
 
 def complete(job, token, key, duration, provenance, mime_type='audio/wav'):
-    if mime_type != 'audio/wav': raise ValueError('fixture must be WAV')
+    if mime_type != 'audio/wav':
+        raise ValueError('fixture must be WAV')
     with db() as c:
         row = c.execute("""select * from synora.jobs where id=%s and lease_token=%s
             and status='running' and lease_until>now() for update""", (job,token)).fetchone()
-        if not row: return False
+        if not row:
+            return False
         asset = c.execute("""insert into synora.assets(user_id,job_id,kind,mime_type,duration_seconds,storage_key,simulated,provenance)
             values(%s,%s,'audio',%s,%s,%s,true,%s) returning id""",
             (row["user_id"],job,mime_type,duration,key,Jsonb(provenance))).fetchone()

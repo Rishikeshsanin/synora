@@ -14,7 +14,6 @@ from synora import api
 from dataclasses import replace
 import json
 import time
-from urllib.parse import urlsplit, parse_qs
 from fastapi.testclient import TestClient
 
 SPEC=dict(prompt="Original melody",mode="instrumental",genres=[],moods=[],instruments=[],duration_seconds=15,bpm=None,lyrics=None,language=None)
@@ -40,7 +39,8 @@ def test_idempotency_concurrent_and_ownership():
 def test_rate_and_cancel():
     uid=uuid4()
     jobs=[db.submit(uid,str(i),SPEC) for i in range(3)]
-    with pytest.raises(db.RateLimited): db.submit(uid,"four",SPEC)
+    with pytest.raises(db.RateLimited):
+        db.submit(uid,"four",SPEC)
     for job in jobs:
         assert db.cancel(uid,job["id"])["status"]=="cancelled"
 
@@ -122,7 +122,6 @@ def test_attempt_exhaustion_releases_credit():
 
 def test_worker_cancel_mid_generation(monkeypatch):
     from synora import worker
-    from synora.storage import local_path
     uid=uuid4()
     job=db.submit(uid,"during",SPEC)
     original=worker.FixtureProvider.generate

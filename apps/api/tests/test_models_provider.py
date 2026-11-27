@@ -41,9 +41,11 @@ def test_artifact_validation(tmp_path):
     output=generate(tmp_path,BASE)
     for forged in (replace(output,simulated=False),replace(output,actual_duration_seconds=30),
                    replace(output,mime_type="audio/mpeg"),replace(output,estimated_cost_usd=1)):
-        with pytest.raises(MusicError): validate_fixture(forged,tmp_path,15)
+        with pytest.raises(MusicError):
+            validate_fixture(forged,tmp_path,15)
     output.artifact.write_bytes(output.artifact.read_bytes()+b"tampered")
-    with pytest.raises(MusicError): validate_fixture(output,tmp_path,15)
+    with pytest.raises(MusicError):
+        validate_fixture(output,tmp_path,15)
 
 def test_engine_cancel(tmp_path):
     with pytest.raises(MusicError):

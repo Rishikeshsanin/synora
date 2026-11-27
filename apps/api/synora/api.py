@@ -5,10 +5,10 @@ import secrets
 import shutil
 import os
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, NoReturn
 from uuid import UUID, uuid4
 import httpx
-from fastapi import FastAPI, Depends, Header, Request
+from fastapi import FastAPI, Depends, Header
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,7 +35,8 @@ async def trace(request,call_next):
         # Enforce actual received bytes, not just an untrusted Content-Length.
         body=bytearray()
         async for chunk in request.stream():
-            if len(body)+len(chunk)>32768: return error(request,413,"body_too_large","Request too large")
+            if len(body)+len(chunk)>32768:
+                return error(request,413,"body_too_large","Request too large")
             body.extend(chunk)
         request._body=bytes(body)
     try:
@@ -56,7 +57,7 @@ async def http_error(request,exc):
 async def invalid(request,exc):
     return error(request,422,"invalid_request","Request validation failed")
 
-def abort(status,code,message):
+def abort(status: int, code: str, message: str) -> NoReturn:
     raise HTTPException(status,detail=(code,message))
 
 def user(authorization: Annotated[str|None,Header()]=None):
@@ -65,21 +66,25 @@ def user(authorization: Annotated[str|None,Header()]=None):
     token=authorization[7:]
     if settings.environment in ("local","test") and settings.provider=="fixture":
         for expected, uid in json.loads(settings.fixture_tokens).items():
-            if expected and secrets.compare_digest(expected.encode(),token.encode()): return UUID(uid)
+            if expected and secrets.compare_digest(expected.encode(),token.encode()):
+                return UUID(uid)
     if not settings.supabase_url or not settings.supabase_key:
         abort(401,"unauthorized","Invalid token")
     try:
         response=httpx.get(settings.supabase_url+"/auth/v1/user",headers={"apikey":settings.supabase_key,"Authorization":f"Bearer {token}"},timeout=5)
-        if response.status_code in (401,403): abort(401,"unauthorized","Invalid token")
+        if response.status_code in (401,403):
+            abort(401,"unauthorized","Invalid token")
         response.raise_for_status()
         record=response.json()
-        if record.get("is_anonymous"): abort(403,"forbidden","Account required")
+        if record.get("is_anonymous"):
+            abort(403,"forbidden","Account required")
         return UUID(record["id"])
     except (httpx.HTTPError,ValueError,KeyError):
         abort(503,"auth_unavailable","Authentication unavailable")
 
 def job_view(row):
-    if not row or (row["simulated"] and settings.environment=="production"): abort(404,"not_found","Job not found")
+    if not row or (row["simulated"] and settings.environment=="production"):
+        abort(404,"not_found","Job not found")
     return {k:row[k] for k in ("id","status","progress","asset_id","error","created_at","updated_at","provider","simulated")}
 
 @app.get("/health")
@@ -90,14 +95,18 @@ def ready():
     try:
         with db.db() as c:
             c.execute("select id from synora.jobs limit 0")
-        if settings.provider!="fixture": abort(503,"provider_disabled","No approved provider")
+        if settings.provider!="fixture":
+            abort(503,"provider_disabled","No approved provider")
         if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
             abort(503,"not_ready","Audio validation tools unavailable")
         settings.media_dir.mkdir(parents=True, exist_ok=True)
-        if not os.access(settings.media_dir, os.W_OK): abort(503,"not_ready","Media storage unavailable")
+        if not os.access(settings.media_dir, os.W_OK):
+            abort(503,"not_ready","Media storage unavailable")
         return {"status":"ready","simulated":True}
-    except HTTPException: raise
-    except Exception: abort(503,"not_ready","Database unavailable")
+    except HTTPException:
+        raise
+    except Exception:
+        abort(503,"not_ready","Database unavailable")
 
 @app.get("/v1/music/capabilities")
 def capabilities():
@@ -105,14 +114,19 @@ def capabilities():
 
 @app.post("/v1/music/jobs",status_code=202)
 def submit(spec:MusicSpec,uid:Annotated[UUID,Depends(user)],key:Annotated[str,Header(alias="Idempotency-Key",min_length=1,max_length=128)]):
-    if not key.strip(): abort(422,"invalid_request","Idempotency key required")
-    if settings.provider!="fixture": abort(503,"provider_disabled","No approved provider")
+    if not key.strip():
+        abort(422,"invalid_request","Idempotency key required")
+    if settings.provider!="fixture":
+        abort(503,"provider_disabled","No approved provider")
     try:
         to_engine_spec(spec)
         return job_view(db.submit(uid,key,spec.model_dump(mode="json")))
-    except (ValueError, MusicError): abort(422,"unsupported_spec","Music specification unsupported")
-    except db.Conflict: abort(409,"idempotency_conflict","Key already used for a different request")
-    except db.RateLimited: abort(429,"rate_limited","Generation limit reached")
+    except (ValueError, MusicError):
+        abort(422,"unsupported_spec","Music specification unsupported")
+    except db.Conflict:
+        abort(409,"idempotency_conflict","Key already used for a different request")
+    except db.RateLimited:
+        abort(429,"rate_limited","Generation limit reached")
 
 @app.get("/v1/jobs/{id}")
 def get_job(id:UUID,uid:Annotated[UUID,Depends(user)]): return job_view(db.owned_job(uid,id))
@@ -123,7 +137,8 @@ def cancel(id:UUID,uid:Annotated[UUID,Depends(user)]): return job_view(db.cancel
 @app.get("/v1/assets/{id}")
 def asset(id:UUID,uid:Annotated[UUID,Depends(user)],download:bool=False):
     row=db.owned_asset(uid,id)
-    if not row or (row["simulated"] and settings.environment=="production"): abort(404,"not_found","Asset not found")
+    if not row or (row["simulated"] and settings.environment=="production"):
+        abort(404,"not_found","Asset not found")
     expiry=int(time.time())+300
     url=local_url(id,expiry,download) if row["simulated"] else SupabaseStorage().sign(row["storage_key"],download)
     return {**{k:row[k] for k in ("id","kind","mime_type","duration_seconds","simulated")},"url":url,"expires_at":datetime.fromtimestamp(expiry,timezone.utc)}
@@ -134,7 +149,8 @@ def media(id:UUID,expires:int,download:bool,sig:str):
         abort(403,"forbidden","Invalid or expired media URL")
     with db.db() as c:
         row=c.execute("select * from synora.assets where id=%s and simulated",(id,)).fetchone()
-    if not row or not local_path(row["storage_key"]).is_file(): abort(404,"not_found","Asset not found")
+    if not row or not local_path(row["storage_key"]).is_file():
+        abort(404,"not_found","Asset not found")
     return FileResponse(local_path(row["storage_key"]),media_type=row["mime_type"],filename=f"{id}.wav" if download else None)
 
 @app.post("/v1/projects",status_code=201)

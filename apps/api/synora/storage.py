@@ -50,5 +50,6 @@ class SupabaseStorage:
                 headers={"apikey":settings.storage_key,"Authorization":f"Bearer {settings.storage_key}"},json={"expiresIn":300})
             response.raise_for_status()
             path=response.json()["signedURL"]
-        if not path.startswith("/object/sign/"): raise ValueError("unexpected storage URL")
+        if not path.startswith("/object/sign/"):
+            raise ValueError("unexpected storage URL")
         return settings.supabase_url+"/storage/v1"+path+("&download=" if download else "")

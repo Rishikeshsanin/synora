@@ -20,7 +20,8 @@ def test_signature_fencing(monkeypatch):
     assert not storage.valid_signature(asset,expiry-120,False,sig)
 
 def test_storage_path_rejects_traversal():
-    with pytest.raises(ValueError): storage.local_path("../../anything.wav")
+    with pytest.raises(ValueError):
+        storage.local_path("../../anything.wav")
 
 
 def test_malformed_signature(monkeypatch):
