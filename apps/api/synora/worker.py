@@ -11,12 +11,15 @@ from engines.music.providers import FixtureProvider
 from .storage import put_local, delete_local
 
 log=logging.getLogger("synora.worker")
-class LostLease(Exception): pass
+class LostLease(Exception):
+    pass
 
 def run_one():
-    if settings.provider != "fixture" or settings.environment == "production": return False
+    if settings.provider != "fixture" or settings.environment == "production":
+        return False
     row=db.claim()
-    if not row: return False
+    if not row:
+        return False
     job, token=row["id"],row["lease_token"]
     key=f'{row["user_id"]}/{job}/{token}.wav'
     last_check=0.0
@@ -29,9 +32,11 @@ def run_one():
         last_check=time.monotonic()
     def cancelled():
         nonlocal lost,last_check
-        if lost: return True
+        if lost:
+            return True
         if time.monotonic()-last_check >= 1:
-            if not db.progress(job,token,0): lost=True
+            if not db.progress(job,token,0):
+                lost=True
             last_check=time.monotonic()
         return lost
     try:
@@ -43,7 +48,8 @@ def run_one():
                                   budget_usd=0,production=False)
             output=FixtureProvider().generate(spec,ctx)
             data,duration,provenance=validate_fixture(output,directory,spec.duration_seconds)
-            if not db.progress(job,token,90): raise LostLease()
+            if not db.progress(job,token,90):
+                raise LostLease()
             put_local(key,data)
             # A definite stale result can be removed. An exception may mean the
             # commit succeeded but its acknowledgement was lost: preserve bytes.
@@ -63,9 +69,11 @@ def main():
         raise SystemExit("No approved active provider")
     while True:
         try:
-            if not run_one(): time.sleep(1)
+            if not run_one():
+                time.sleep(1)
         except Exception:
             log.warning("worker_database_unavailable")
             time.sleep(5)
 
-if __name__=="__main__": main()
+if __name__=="__main__":
+    main()

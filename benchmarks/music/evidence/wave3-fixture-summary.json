@@ -1,0 +1,29 @@
+{
+  "python": "3.13.5",
+  "ffmpeg": "7.1.5-0+deb13u1",
+  "source_commit": "f51b18d9706a0c3bfeca56ad276dee4e11f1fe88",
+  "simulated": true,
+  "seed": 42,
+  "cases": 9,
+  "passed": 9,
+  "decoded_seconds": 330,
+  "max_duration_error": 0,
+  "median_seconds": 0.36637663400006204,
+  "bytes": 10560396,
+  "estimated_cost_usd": 0,
+  "actual_cost_usd": null,
+  "quality_score": null,
+  "prompt_adherence_score": null,
+  "gpu_peak_vram_bytes": null,
+  "hashes": {
+    "english-pop": "05ed9df0a7125d0265239b3c48cda30db4b172f50aaebb9f0f3868ab4974cd1e",
+    "telugu-song": "26c82965c7de9878f8244b159df2c551ad8bf4e68e4ab57c9b7531ae931c22b3",
+    "hindi-song": "cda2510e56b5d1ec3eccb89f72d4212c9bd36192d4396f919bd945626a31bfcb",
+    "indian-classical": "87720154ba75d38bf6eabe50ed190e7989e66cf57c0a32b121c526a42a74974f",
+    "cinematic": "6fcf4d55a898b8e10be269ec428fbfc8e3d3e289f9417e75b05e8f1125cd8adf",
+    "edm": "c47877b867882b66a9845bea9e9220d4a21d93b45fc0b6dda4413c7488beb46c",
+    "advertising": "e6fa597005719679b99d5b9381fbd272cc0939547322350173cdb6f16594f344",
+    "text-to-vocals": "16f6d9a439619555ceba03cdab8d4d6cff1e6517e8f05fb64caa06436a707bf6",
+    "long-cinematic": "88be3becc32620bf3107b496ed307f218f895b0dccae33981cb5d66af1e1c2d9"
+  }
+}

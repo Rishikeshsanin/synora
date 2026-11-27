@@ -123,3 +123,76 @@ def test_rejected_settlement_does_not_leave_orphan(stack, monkeypatch):
     assert state(db,job)["assets"] == 0
     assert state(db,job)["reservation"] == "released"
     assert not list(storage.settings.media_dir.glob("*/"+job+"/*.wav")), "Rejected settlement left orphan media"
+
+
+def test_commit_ack_lost_preserves_committed_audio(stack, monkeypatch):
+    """Inject lost acknowledgement only AFTER the real DB transaction commits."""
+    db, worker, storage, client, a, b = stack
+    job = submit(client, a)
+    actual_complete = db.complete
+    seen = []
+
+    def commit_then_disconnect(*args, **kwargs):
+        assert actual_complete(*args, **kwargs) is True
+        seen.append(args[2])
+        raise ConnectionError("QA injected lost commit acknowledgement")
+
+    monkeypatch.setattr(db, "complete", commit_then_disconnect)
+    assert worker.run_one()
+    assert len(seen) == 1
+    result = state(db, job)
+    assert (result["status"], result["attempts"], result["reservation"], result["assets"]) == (
+        "succeeded", 1, "settled", 1
+    )
+    asset = str(result["asset_id"])
+    path = storage.local_path(seen[0])
+    assert path.is_file()
+    meta = client.get("/v1/assets/" + asset, headers=a)
+    assert meta.status_code == 200
+    assert client.get("/v1/assets/" + asset, headers=b).status_code == 404
+    signed = urlparse(meta.json()["url"])
+    media = client.get(signed.path + "?" + signed.query)
+    assert media.status_code == 200
+    assert hashlib.sha256(media.content).digest() == hashlib.sha256(path.read_bytes()).digest()
+    assert not worker.run_one(), "Committed job must not be reclaimed"
+
+
+def test_precommit_disconnect_retry_retains_single_authoritative_asset(stack, monkeypatch):
+    """A write followed by a failed DB transaction must not settle twice.
+
+    Reconciliation of the abandoned attempt is a separate required gate:
+    temporary retention is safe until the transaction outcome is known.
+    """
+    db, worker, storage, client, a, b = stack
+    job = submit(client, a)
+    actual_complete = db.complete
+    abandoned = []
+
+    def fail_before_commit(*args, **kwargs):
+        abandoned.append(args[2])
+        assert storage.local_path(args[2]).is_file()
+        raise ConnectionError("QA injected disconnect before settlement")
+
+    monkeypatch.setattr(db, "complete", fail_before_commit)
+    assert worker.run_one()
+    assert len(abandoned) == 1
+    pending = state(db, job)
+    assert (pending["status"], pending["attempts"], pending["reservation"], pending["assets"]) == (
+        "queued", 1, "reserved", 0
+    )
+    monkeypatch.setattr(db, "complete", actual_complete)
+    with db.db() as c:
+        c.execute("update synora.jobs set available_at=now() where id=%s", (job,))
+    assert worker.run_one()
+    result = state(db, job)
+    assert (result["status"], result["attempts"], result["reservation"], result["assets"]) == (
+        "succeeded", 2, "settled", 1
+    )
+    with db.db() as c:
+        row = c.execute("select storage_key from synora.assets where id=%s", (result["asset_id"],)).fetchone()
+    assert row["storage_key"] != abandoned[0]
+    assert storage.local_path(row["storage_key"]).is_file()
+    assert client.get("/v1/assets/" + str(result["asset_id"]), headers=b).status_code == 404
+    # Report without paths or tokens. The abandoned bytes still require
+    # independent reconciliation verification; passing this test is not that gate.
+    print("QA abandoned attempt retained:", storage.local_path(abandoned[0]).exists())

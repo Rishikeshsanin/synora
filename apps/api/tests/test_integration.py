@@ -14,7 +14,6 @@ from synora import api
 from dataclasses import replace
 import json
 import time
-from urllib.parse import urlsplit, parse_qs
 from fastapi.testclient import TestClient
 
 SPEC=dict(prompt="Original melody",mode="instrumental",genres=[],moods=[],instruments=[],duration_seconds=15,bpm=None,lyrics=None,language=None)
@@ -40,7 +39,8 @@ def test_idempotency_concurrent_and_ownership():
 def test_rate_and_cancel():
     uid=uuid4()
     jobs=[db.submit(uid,str(i),SPEC) for i in range(3)]
-    with pytest.raises(db.RateLimited): db.submit(uid,"four",SPEC)
+    with pytest.raises(db.RateLimited):
+        db.submit(uid,"four",SPEC)
     for job in jobs:
         assert db.cancel(uid,job["id"])["status"]=="cancelled"
 
@@ -122,7 +122,6 @@ def test_attempt_exhaustion_releases_credit():
 
 def test_worker_cancel_mid_generation(monkeypatch):
     from synora import worker
-    from synora.storage import local_path
     uid=uuid4()
     job=db.submit(uid,"during",SPEC)
     original=worker.FixtureProvider.generate
@@ -134,3 +133,76 @@ def test_worker_cancel_mid_generation(monkeypatch):
     row=db.owned_job(uid,job["id"])
     assert row["status"]=="cancelled" and row["asset_id"] is None
     assert not (settings.media_dir / str(uid) / str(job["id"])).exists()
+
+
+def test_persistent_library_pagination_and_isolation(monkeypatch):
+    uid,other=uuid4(),uuid4()
+    token_a,token_b=str(uuid4()),str(uuid4())
+    monkeypatch.setattr(api,"settings",replace(settings,fixture_tokens=json.dumps({
+        token_a:str(uid),token_b:str(other)}),supabase_url="",supabase_key=""))
+    a={"Authorization":f"Bearer {token_a}"}
+    b={"Authorization":f"Bearer {token_b}"}
+    first=db.submit(uid,"library-a",SPEC)
+    assert run_one()
+    second=db.submit(uid,"library-b",SPEC|{"prompt":"Second song"})
+    db.cancel(uid,second["id"])
+    foreign=db.submit(other,"library-other",SPEC|{"prompt":"PRIVATE"})
+    db.cancel(other,foreign["id"])
+    with TestClient(app) as client:
+        endpoint="/v1/music/library"
+        assert client.get(endpoint).status_code==401
+        assert client.get(endpoint+"?limit=101",headers=a).status_code==422
+        page=client.get(endpoint+"?limit=1",headers=a).json()
+        assert len(page["items"])==1
+        assert page["items"][0]["job"]["id"]==str(second["id"])
+        assert page["items"][0]["asset"] is None
+        assert page["items"][0]["prompt"]=="Second song"
+        assert page["next_cursor"]==str(second["id"])
+        page2=client.get(endpoint,params={"cursor":page["next_cursor"]},headers=a).json()
+        assert page2["next_cursor"] is None
+        assert len(page2["items"])==1
+        item=page2["items"][0]
+        assert item["job"]["id"]==str(first["id"])
+        assert item["asset"]["id"]==item["job"]["asset_id"]
+        assert item["asset"]["simulated"] is True
+        assert "storage_key" not in item["asset"] and "user_id" not in item["job"]
+        assert client.get(item["asset"]["url"]).content[:4]==b"RIFF"
+        assert client.get(endpoint,params={"cursor":str(foreign["id"])},headers=a).status_code==422
+        assert client.get(endpoint,params={"cursor":str(uuid4())},headers=a).status_code==422
+        assert client.get(endpoint,headers=b).json()["items"][0]["prompt"]=="PRIVATE"
+        assert client.post(f"/v1/jobs/{first['id']}/cancel",headers=a).json()["status"]=="succeeded"
+        assert client.post(f"/v1/jobs/{first['id']}/cancel",headers=b).status_code==404
+
+
+def test_reconcile_only_definitive_stale_fixture(monkeypatch):
+    from synora.cleanup import reconcile_attempt
+    from synora.storage import local_path, put_local
+    uid=uuid4()
+    job=db.submit(uid,"reconcile",SPEC)
+    running=db.claim()
+    assert running["id"]==job["id"]
+    key=f"{uid}/{job['id']}/{running['lease_token']}.wav"
+    put_local(key,b"test orphan")
+    path=local_path(key)
+    assert not reconcile_attempt(key)  # young artifact
+    old=time.time()-601
+    os.utime(path,(old,old))
+    assert not reconcile_attempt(key)  # matching lease, even if expired
+    with db.db() as c:
+        c.execute("update synora.jobs set lease_until=now()-interval '1 second' where id=%s",(job["id"],))
+    assert not reconcile_attempt(key)
+    db.cancel(uid,job["id"])
+    assert reconcile_attempt(key)
+    assert not path.exists()
+    assert not reconcile_attempt(key)
+    assert db.owned_job(uid,job["id"])["status"]=="cancelled"
+
+    completed=db.submit(uid,"reconcile-committed",SPEC)
+    assert run_one()
+    with db.db() as c:
+        record=c.execute("select storage_key from synora.assets where job_id=%s",(completed["id"],)).fetchone()
+    committed_key=record["storage_key"]
+    committed_path=local_path(committed_key)
+    os.utime(committed_path,(old,old))
+    assert not reconcile_attempt(committed_key)
+    assert committed_path.is_file()

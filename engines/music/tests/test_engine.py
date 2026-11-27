@@ -3,7 +3,6 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import patch
 from engines.music import (MusicSpec, GenerationContext, FixtureProvider, AceStepProvider,
                            LyriaProvider, MusicError, registry)
 from engines.music.audio import inspect_audio, master, run

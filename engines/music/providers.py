@@ -4,10 +4,9 @@ import hashlib
 import json
 import math
 import os
-from pathlib import Path
 import struct
 import time
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 from urllib.error import URLError
 import wave
@@ -26,9 +25,9 @@ class NoRedirect(HTTPRedirectHandler):
 def http(url, headers, payload, timeout, limit):
     data = None if payload is None else json.dumps(payload).encode()
     req = Request(url, data=data, headers={"Content-Type":"application/json", **headers})
+    deadline = time.monotonic() + timeout
     try:
         with build_opener(NoRedirect()).open(req, timeout=timeout) as response:
-            deadline = time.monotonic() + timeout
             chunks, size = [], 0
             while True:
                 if time.monotonic() >= deadline:
@@ -68,16 +67,21 @@ def save(ctx, name, audio):
         raise MusicError("audio response size invalid")
     path = ctx.output_dir / name
     with path.open("xb") as f:
-        f.write(audio)
+        try:
+            f.write(audio)
+        except OSError:
+            path.unlink(missing_ok=True)
+            raise MusicError("audio artifact write failed") from None
     return path
 
 def fixture_capabilities():
     """Stable JSON-compatible capability payload for the backend adapter."""
-    return {"simulated": True, "vocals": False, "lyrics": False, "exact_bpm": False,
+    cap = FixtureProvider.capabilities
+    return {"simulated": cap.simulated, "vocals": False, "lyrics": False, "exact_bpm": False,
             "genres": False, "moods": False, "instruments": False, "language": False,
-            "provider": "fixture", "model": "procedural-tone", "revision": "1",
-            "duration_control": "exact", "min_duration_seconds": 15, "max_duration_seconds": 120,
-            "limitations": ["Synthetic test tone only; no AI music or vocals"]}
+            "provider": cap.provider, "model": cap.model, "revision": cap.revision,
+            "duration_control": cap.duration_control, "min_duration_seconds": 15, "max_duration_seconds": 120,
+            "limitations": list(cap.limitations)}
 
 class FixtureProvider:
     capabilities = Capabilities("fixture", "procedural-tone", "1", True, "exact", "synthetic",
@@ -167,6 +171,8 @@ class AceStepProvider:
             if not isinstance(rows,list) or len(rows)!=1 or not isinstance(rows[0],dict) or rows[0].get("task_id")!=task_id:
                 raise MusicError("unexpected ACE task response")
             row = rows[0]
+            if type(row.get("status")) is not int:
+                raise MusicError("invalid ACE task status")
             if row.get("status")==2:
                 raise MusicError("ACE generation failed")
             if row.get("status")==1:
@@ -176,8 +182,17 @@ class AceStepProvider:
                 track = tracks[0]
                 if track.get("dit_model") != cap.model:
                     raise MusicError("ACE returned unexpected model")
-                url = urlsplit(track.get("file",""))
-                if url.scheme or url.netloc or url.path!="/v1/audio" or not url.query.startswith("path=") or url.fragment:
+                file_url = track.get("file")
+                if not isinstance(file_url, str) or any(ord(c) < 32 for c in file_url):
+                    raise MusicError("unsafe ACE audio URL")
+                try:
+                    url = urlsplit(file_url)
+                    query = parse_qs(url.query, strict_parsing=True, keep_blank_values=True, max_num_fields=1)
+                except ValueError:
+                    raise MusicError("unsafe ACE audio URL") from None
+                if (url.scheme or url.netloc or url.path != "/v1/audio" or url.fragment
+                        or set(query) != {"path"} or len(query["path"]) != 1
+                        or not query["path"][0] or any(ord(c) < 32 for c in query["path"][0])):
                     raise MusicError("unsafe ACE audio URL")
                 context.progress(85)
                 audio = self.request(context, url.path+"?"+url.query, raw=True)
@@ -211,10 +226,12 @@ class LyriaProvider:
             {"x-goog-api-key":self.key,"Api-Revision":LYRIA_REVISION},
             {"model":cap.model,"input":prompt},context.remaining(),MAX_AUDIO_BYTES*2)
         body=decode_json(data)
-        if not isinstance(body,dict) or body.get("error") or body.get("status") in ("failed","cancelled","requires_action"):
-            raise MusicError("Lyria generation failed")
-        if isinstance(body.get("id"),str):
+        if not isinstance(body, dict):
+            raise MusicError("invalid Lyria response")
+        if isinstance(body.get("id"), str) and body["id"]:
             context.upstream_job(body["id"])
+        if body.get("error") or body.get("status") in ("failed", "cancelled", "requires_action", "in_progress"):
+            raise MusicError("Lyria generation failed or incomplete; reconcile before retry")
         steps = body.get("steps")
         if not isinstance(steps, list) or any(not isinstance(s, dict) for s in steps):
             raise MusicError("invalid Lyria steps")

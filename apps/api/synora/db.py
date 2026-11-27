@@ -7,8 +7,10 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from .config import settings
 
-class Conflict(Exception): pass
-class RateLimited(Exception): pass
+class Conflict(Exception):
+    pass
+class RateLimited(Exception):
+    pass
 
 @contextmanager
 def db():
@@ -26,12 +28,14 @@ def submit(user, key, spec):
         c.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (str(user),))
         old = c.execute("select * from synora.jobs where user_id=%s and idempotency_key=%s", (user,key)).fetchone()
         if old:
-            if old["request_hash"] != digest: raise Conflict()
+            if old["request_hash"] != digest:
+                raise Conflict()
             return old
         counts = c.execute("""select count(*) filter (where created_at > now()-interval '1 minute') as recent,
             count(*) filter (where status in ('queued','running')) as active
             from synora.jobs where user_id=%s""", (user,)).fetchone()
-        if counts["recent"] >= 5 or counts["active"] >= 3: raise RateLimited()
+        if counts["recent"] >= 5 or counts["active"] >= 3:
+            raise RateLimited()
         row = c.execute("""insert into synora.jobs(user_id,spec,idempotency_key,request_hash,simulated,provider)
             values(%s,%s,%s,%s,true,'fixture') returning *""", (user,Jsonb(spec),key,digest)).fetchone()
         c.execute("insert into synora.credit_reservations(job_id) values(%s)", (row["id"],))
@@ -80,11 +84,13 @@ def progress(job, token, value):
             (min(99,max(0,value)),job,token)).rowcount == 1
 
 def complete(job, token, key, duration, provenance, mime_type='audio/wav'):
-    if mime_type != 'audio/wav': raise ValueError('fixture must be WAV')
+    if mime_type != 'audio/wav':
+        raise ValueError('fixture must be WAV')
     with db() as c:
         row = c.execute("""select * from synora.jobs where id=%s and lease_token=%s
             and status='running' and lease_until>now() for update""", (job,token)).fetchone()
-        if not row: return False
+        if not row:
+            return False
         asset = c.execute("""insert into synora.assets(user_id,job_id,kind,mime_type,duration_seconds,storage_key,simulated,provenance)
             values(%s,%s,'audio',%s,%s,%s,true,%s) returning id""",
             (row["user_id"],job,mime_type,duration,key,Jsonb(provenance))).fetchone()
@@ -101,3 +107,28 @@ def fail(job, token):
             where id=%s and lease_token=%s and status='running' and lease_until>now() returning status""",(job,token)).fetchone()
         if row and row["status"]=="failed":
             c.execute("update synora.credit_reservations set status='released',updated_at=now() where job_id=%s and status='reserved'",(job,))
+
+
+def music_library(owner, limit, cursor=None, include_simulated=True):
+    """Keyset pagination; cursor must identify a visible job belonging to owner."""
+    with db() as c:
+        marker = None
+        if cursor is not None:
+            marker = c.execute("""select created_at,id from synora.jobs
+                where user_id=%s and id=%s and kind='music' and (%s or not simulated)""",
+                (owner,cursor,include_simulated)).fetchone()
+            if marker is None:
+                raise ValueError("invalid library cursor")
+        query = """select j.*, jsonb_build_object(
+            'id',a.id,'kind',a.kind,'mime_type',a.mime_type,
+            'duration_seconds',a.duration_seconds,'storage_key',a.storage_key,
+            'simulated',a.simulated) as joined_asset
+            from synora.jobs j left join synora.assets a
+            on a.id=j.asset_id and a.user_id=j.user_id and a.job_id=j.id
+            where j.user_id=%s and j.kind='music' and (%s or not j.simulated)"""
+        if marker is not None:
+            return c.execute(query+""" and (j.created_at,j.id)<(%s,%s)
+                order by j.created_at desc,j.id desc limit %s""",
+                (owner,include_simulated,marker["created_at"],marker["id"],limit+1)).fetchall()
+        return c.execute(query+" order by j.created_at desc,j.id desc limit %s",
+                         (owner,include_simulated,limit+1)).fetchall()

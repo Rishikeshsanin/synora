@@ -9,16 +9,17 @@ from engines.music import (MusicSpec, GenerationContext, FixtureProvider, LyriaP
 class Wave2Tests(unittest.TestCase):
     def test_api_payload_bounds_and_normalization(self):
         spec = MusicSpec(prompt=" piano ", mode="instrumental", genres=[" pop "],
-                         moods=[], instruments=["a" * 64] * 20,
-                         duration_seconds=15, bpm=40, lyrics="  ", language=" en ")
+                         moods=[], instruments=["a" * 64] * 12,
+                         duration_seconds=15, bpm=40, lyrics=None, language=" en ")
         self.assertEqual(spec.prompt, "piano")
         self.assertEqual(spec.genres, ("pop",))
-        self.assertEqual(len(spec.instruments), 20)
+        self.assertEqual(len(spec.instruments), 12)
         self.assertIsNone(spec.lyrics)
         self.assertEqual(spec.language, "en")
-        for kwargs in ({"instruments": ["x"] * 21}, {"genres": ["x"] * 13},
+        for kwargs in ({"instruments": ["x"] * 13}, {"genres": ["x"] * 13},
                        {"moods": ["x"] * 13}, {"genres": ["x" * 65]},
-                       {"language": "x" * 65}):
+                       {"language": "x" * 33}, {"lyrics": ""}, {"lyrics": "  "},
+                       {"mode": "vocals", "lyrics": "  "}):
             with self.assertRaises(ValueError):
                 MusicSpec("piano", **kwargs)
 
