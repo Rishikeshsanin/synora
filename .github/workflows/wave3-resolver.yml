@@ -22,6 +22,8 @@ jobs:
         working-directory: apps/web
         run: |
           set -euo pipefail
+          npm view postcss@8.5.23 version
+          npm view sharp@0.35.5 version
           npm install --package-lock-only --ignore-scripts --no-audit --no-fund
           python3 -c 'import pathlib; print("\n".join("SYNORA_LOCK_LINE "+line for line in pathlib.Path("package-lock.json").read_text().splitlines()))'
       - name: Audit actual candidate lock (blocking)
@@ -44,7 +46,23 @@ jobs:
         run: |
           python3.12 -m venv "$RUNNER_TEMP/resolver"
           "$RUNNER_TEMP/resolver/bin/pip" install --require-hashes -r infrastructure/ci/pip.lock
-          "$RUNNER_TEMP/resolver/bin/pip" install pip-tools==7.5.0
+          # Resolve an exact current UV tool version from the public registry.
+          # This is an isolated resolver-only tool; patched pip remains in all verification environments.
+          "$RUNNER_TEMP/resolver/bin/python" - <<'PY'
+          import hashlib, json, pathlib, subprocess, sys, urllib.request, os
+          metadata=json.load(urllib.request.urlopen("https://pypi.org/pypi/uv/json",timeout=20))
+          version=metadata["info"]["version"]
+          dest=pathlib.Path(os.environ["RUNNER_TEMP"])/"resolver-wheel"
+          dest.mkdir()
+          subprocess.run([sys.executable,"-m","pip","download","--only-binary=:all:","--no-deps","-d",str(dest),"uv=="+version],check=True)
+          wheel,=dest.glob("*.whl")
+          digest=hashlib.sha256(wheel.read_bytes()).hexdigest()
+          expected={x["filename"]:x["digests"]["sha256"] for x in metadata["urls"]}
+          assert expected[wheel.name]==digest
+          subprocess.run([sys.executable,"-m","pip","install","--no-deps",str(wheel)],check=True)
+          print("Resolver UV",version,"wheel sha256",digest)
+          PY
+          "$RUNNER_TEMP/resolver/bin/uv" --version
       - name: Resolve reviewed exact candidates
         env:
           COMPONENT: ${{ matrix.component }}
@@ -55,7 +73,7 @@ jobs:
             api-dev) cat apps/api/requirements.txt > "$RUNNER_TEMP/requirements.in"; printf 'pytest==9.0.3\nruff==0.12.2\nmypy==1.16.1\npip-audit==2.9.0\n' >> "$RUNNER_TEMP/requirements.in" ;;
             media) cat engines/media/requirements.txt > "$RUNNER_TEMP/requirements.in"; printf 'ruff==0.12.2\nmypy==1.16.1\npip-audit==2.9.0\n' >> "$RUNNER_TEMP/requirements.in" ;;
           esac
-          "$RUNNER_TEMP/resolver/bin/pip-compile" --allow-unsafe --generate-hashes --no-emit-index-url --no-emit-trusted-host --output-file="$RUNNER_TEMP/candidate.lock" "$RUNNER_TEMP/requirements.in"
+          "$RUNNER_TEMP/resolver/bin/uv" pip compile --python "$RUNNER_TEMP/resolver/bin/python" --generate-hashes --no-annotate --output-file "$RUNNER_TEMP/candidate.lock" "$RUNNER_TEMP/requirements.in"
           python3 -c 'import pathlib,os; print("\n".join("SYNORA_LOCK_LINE "+line for line in (pathlib.Path(os.environ["RUNNER_TEMP"])/"candidate.lock").read_text().splitlines()))'
       - name: Verify clean installation and locked environment
         run: |
