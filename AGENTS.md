@@ -1,0 +1,9 @@
+# Synora engineering instructions
+
+Repository scope: ONLY Rishikeshsanin/synora. Lead integrator owns shared contracts, integration and release approval. Specialist agents must inspect latest main, assigned issue, open PRs and docs before coding. Use branch agent/<role>/<topic> from latest main; open draft PR linking issue. Never push main, merge your own PR, force-push shared branches, or deploy production without lead approval. Don't modify unrelated repos, databases or services.
+
+Ownership: frontend apps/web and packages/ui; backend apps/api and supabase/migrations; music engines/music and benchmarks/music; media engines/media, engines/creative and benchmarks/media; devops infrastructure, .github/workflows and deployment config; QA tests/integration, tests/e2e and docs/qa. Each owns tests inside its own paths. Lead owns docs/CONTRACTS.md and shared packages/contracts. Propose contract changes via issue comments; do not unilaterally change shared contracts. Avoid root dependency changes without coordination.
+
+No Railway. Development targets Vercel + Render + isolated Supabase + optional R2 + on-demand GPU (RunPod/Modal). No paid resources, credentials, production deploys, live migrations, or unbounded inference without explicit owner approval. Never expose secrets. Use local containers and fake providers in CI; clearly label mocks, no fabricated generation or test success. No unofficial provider APIs. Pin versions and model revisions, verify licenses and SaaS rights before activation.
+
+Use small commits, tests, lint/typecheck, reproducible commands, and CI evidence. Report branch, commit, PR, changes, commands and actual results, blockers, next steps and any contract requests in issue/PR. Do not claim release complete without real end-to-end validation. Keep user uploads private, require rights to uploaded assets, consent for voice/likeness, do not invent advertising claims. 
