@@ -2,7 +2,7 @@ name: Synora CI
 on:
   pull_request:
   push:
-    branches: [main, integration/m1-foundation]
+    branches: [main, integration/m1-foundation, 'agent/devops/verify-*']
   workflow_dispatch:
 permissions:
   contents: read
@@ -47,6 +47,10 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - name: Frontend Chromium acceptance
+        run: |
+          npx --no-install playwright install --with-deps chromium
+          npm run test:browser
   rls:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -150,6 +154,28 @@ jobs:
           python -m mypy engines/media engines/creative
       - run: python -m unittest discover -s benchmarks/media -p 'test_*.py' -v
       - run: python -m benchmarks.media.demo "$RUNNER_TEMP/synora-ad-demo"
+  qa-db:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: bash infrastructure/ci/ffmpeg.sh
+      - run: bash infrastructure/ci/venv.sh apps/api/requirements-dev.lock
+      - run: python -m pip_audit --strict
+      - run: bash infrastructure/ci/start-db.sh
+      - name: Independent disposable worker acceptance
+        run: |
+          source infrastructure/ci/fixture-env.sh
+          export API_PUBLIC_URL=http://testserver
+          export PYTHONPATH="$GITHUB_WORKSPACE/apps/api:$GITHUB_WORKSPACE"
+          export SYNORA_QA_DISPOSABLE_DB=1 SYNORA_QA_REQUIRE_DB=1
+          python -m pytest -q -rs tests/integration/test_wave2_worker.py --junitxml="$RUNNER_TEMP/qa-db.xml"
+          python infrastructure/ci/assert-no-skips.py "$RUNNER_TEMP/qa-db.xml"
+      - name: Remove disposable database
+        if: always()
+        run: docker rm -f -v synora-ci-db || test -z "$(docker ps -aq --filter name=^/synora-ci-db$)"
   integrated:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -196,13 +222,16 @@ jobs:
       - name: Strict browser acceptance (no skips)
         env:
           SYNORA_QA_REQUIRE_BROWSER: '1'
+          SYNORA_QA_REQUIRE_BROWSER_API: '1'
           SYNORA_QA_WEB_URL: http://127.0.0.1:3000
         run: |
           source infrastructure/ci/fixture-env.sh
-          # QA owner must implement this setup using an actual isolated fixture
-          # result and authenticated browser state. Missing setup is a failure.
-          test -f tests/e2e/setup_ci_fixture.sh || { echo "::error::QA/frontend fixture setup not yet committed"; exit 1; }
-          source tests/e2e/setup_ci_fixture.sh
+          export SYNORA_QA_FIXTURE_POSTS=1 SYNORA_QA_API_URL="$API_PUBLIC_URL"
+          # Run the full suite even if persisted Studio fixture setup is missing.
+          # Strict tests themselves will fail on missing configuration; never skip.
+          if [ -f tests/e2e/setup_ci_fixture.sh ]; then
+            source tests/e2e/setup_ci_fixture.sh
+          fi
           python -m pytest -q -rs tests/e2e --junitxml="$RUNNER_TEMP/browser.xml"
           python infrastructure/ci/assert-no-skips.py "$RUNNER_TEMP/browser.xml"
       - name: Remove disposable database

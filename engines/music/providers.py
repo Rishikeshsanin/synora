@@ -71,6 +71,14 @@ def save(ctx, name, audio):
         f.write(audio)
     return path
 
+def fixture_capabilities():
+    """Stable JSON-compatible capability payload for the backend adapter."""
+    return {"simulated": True, "vocals": False, "lyrics": False, "exact_bpm": False,
+            "genres": False, "moods": False, "instruments": False, "language": False,
+            "provider": "fixture", "model": "procedural-tone", "revision": "1",
+            "duration_control": "exact", "min_duration_seconds": 15, "max_duration_seconds": 120,
+            "limitations": ["Synthetic test tone only; no AI music or vocals"]}
+
 class FixtureProvider:
     capabilities = Capabilities("fixture", "procedural-tone", "1", True, "exact", "synthetic",
         "simulated", "simulated", ("TEST ONLY: no vocals or AI music; ignores artistic controls",))
@@ -102,7 +110,7 @@ class FixtureProvider:
             except Exception:
                 path.unlink(missing_ok=True)
                 raise
-        return result(path, cap, context, 0, {"seed":context.seed, "rights":"original procedural fixture", "simulated":True})
+        return result(path, cap, context, 0, {"seed":context.seed, "rights":"original procedural fixture", "simulated":True}, expected_mime="audio/wav")
 
 class AceStepProvider:
     capabilities = Capabilities("ace-step", "acestep-v15-turbo", ACE_REVISION, False, "target", "target",
@@ -205,15 +213,25 @@ class LyriaProvider:
         body=decode_json(data)
         if not isinstance(body,dict) or body.get("error") or body.get("status") in ("failed","cancelled","requires_action"):
             raise MusicError("Lyria generation failed")
-        blocks=[b for s in body.get("steps",[]) if s.get("type")=="model_output" for b in s.get("content",[]) if b.get("type")=="audio"]
+        if isinstance(body.get("id"),str):
+            context.upstream_job(body["id"])
+        steps = body.get("steps")
+        if not isinstance(steps, list) or any(not isinstance(s, dict) for s in steps):
+            raise MusicError("invalid Lyria steps")
+        blocks = []
+        for step in steps:
+            if step.get("type") != "model_output":
+                continue
+            content = step.get("content")
+            if not isinstance(content, list) or any(not isinstance(b, dict) for b in content):
+                raise MusicError("invalid Lyria content")
+            blocks.extend(b for b in content if b.get("type") == "audio")
         if len(blocks)!=1:
             raise MusicError("Lyria response lacks a single audio artifact")
         try:
             audio=base64.b64decode(blocks[0]["data"],validate=True)
         except (ValueError,KeyError,TypeError):
             raise MusicError("invalid Lyria audio encoding") from None
-        if isinstance(body.get("id"),str):
-            context.upstream_job(body["id"])
         context.progress(85)
         path=save(context,"lyria.mp3",audio)
         return result(path,cap,context,self.cost,{"api_revision":LYRIA_REVISION,"seed_supported":False,
@@ -223,8 +241,9 @@ def registry(env=None):
     """Availability reflects config, not a health probe or legal approval."""
     env=os.environ if env is None else env
     out={}
-    if env.get("SYNORA_ENV")!="production":
-        out["fixture"]=FixtureProvider()
+    if env.get("SYNORA_ENV")=="production":
+        return out
+    out["fixture"]=FixtureProvider()
     if env.get("SYNORA_REAL_MUSIC_APPROVED")!="1":
         return out
     if env.get("SYNORA_ACE_APPROVED")=="1":
