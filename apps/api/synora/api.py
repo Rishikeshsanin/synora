@@ -130,14 +130,16 @@ def capabilities():
     return fixture_capabilities() if settings.provider=="fixture" else {"available":False,"simulated":False}
 
 @app.post("/v1/music/jobs",status_code=202)
-def submit(spec:MusicSpec,uid:Annotated[UUID,Depends(user)],key:Annotated[str,Header(alias="Idempotency-Key",min_length=1,max_length=128)]):
+def submit(spec:MusicSpec,uid:Annotated[UUID,Depends(user)],key:Annotated[str,Header(alias="Idempotency-Key",min_length=1,max_length=128)],project_id:UUID|None=None):
     if not key.strip():
         abort(422,"invalid_request","Idempotency key required")
     if settings.provider!="fixture":
         abort(503,"provider_disabled","No approved provider")
     try:
         to_engine_spec(spec)
-        return job_view(db.submit(uid,key,spec.model_dump(mode="json")))
+        return job_view(db.submit(uid,key,spec.model_dump(mode="json"),project_id))
+    except db.ProjectNotFound:
+        abort(404,"not_found","Project not found")
     except (ValueError, MusicError):
         abort(422,"unsupported_spec","Music specification unsupported")
     except db.Conflict:
@@ -147,6 +149,15 @@ def submit(spec:MusicSpec,uid:Annotated[UUID,Depends(user)],key:Annotated[str,He
 
 @app.get("/v1/jobs/{id}")
 def get_job(id:UUID,uid:Annotated[UUID,Depends(user)]): return job_view(db.owned_job(uid,id))
+
+@app.get("/v1/jobs/{id}/recipe")
+def recipe(id:UUID,uid:Annotated[UUID,Depends(user)]):
+    row=db.owned_job(uid,id)
+    if not row or row["kind"]!="music" or (row["simulated"] and settings.environment=="production"):
+        abort(404,"not_found","Job not found")
+    # Validate the stored public spec rather than returning arbitrary internal fields.
+    return {"project_id":row["project_id"],"spec":MusicSpec.model_validate(row["spec"]).model_dump(mode="json")}
+
 
 @app.post("/v1/jobs/{id}/cancel")
 def cancel(id:UUID,uid:Annotated[UUID,Depends(user)]): return job_view(db.cancel(uid,id))
@@ -166,9 +177,11 @@ def asset(id:UUID,uid:Annotated[UUID,Depends(user)],download:bool=False):
 @app.get("/v1/music/library")
 def library(uid:Annotated[UUID,Depends(user)],
             limit:Annotated[int,Query(ge=1,le=100)]=30,
-            cursor:UUID|None=None):
+            cursor:UUID|None=None,project_id:UUID|None=None):
     try:
-        rows=db.music_library(uid,limit,cursor,settings.environment!="production")
+        rows=db.music_library(uid,limit,cursor,settings.environment!="production",project_id)
+    except db.ProjectNotFound:
+        abort(404,"not_found","Project not found")
     except ValueError:
         abort(422,"invalid_cursor","Invalid library cursor")
     items=[]
@@ -197,3 +210,11 @@ def create_project(spec:ProjectSpec,uid:Annotated[UUID,Depends(user)]):
 def projects(uid:Annotated[UUID,Depends(user)]):
     with db.db() as c:
         return c.execute("select id,name,created_at from synora.projects where user_id=%s order by created_at desc limit 100",(uid,)).fetchall()
+
+
+@app.get("/v1/projects/{id}")
+def project(id:UUID,uid:Annotated[UUID,Depends(user)]):
+    try:
+        return db.owned_project(uid,id)
+    except db.ProjectNotFound:
+        abort(404,"not_found","Project not found")

@@ -12,6 +12,9 @@ class Conflict(Exception):
 class RateLimited(Exception):
     pass
 
+class ProjectNotFound(Exception):
+    pass
+
 @contextmanager
 def db():
     with psycopg.connect(settings.database_url, row_factory=dict_row, connect_timeout=5,
@@ -21,11 +24,15 @@ def db():
 def canonical_hash(spec):
     return hashlib.sha256(json.dumps(spec, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
 
-def submit(user, key, spec):
-    digest = canonical_hash(spec)
+def submit(user, key, spec, project_id=None):
+    # Preserve legacy idempotency hashes when no project is selected.
+    digest = canonical_hash(spec if project_id is None else {
+        'spec': spec, 'project_id': str(project_id)})
     with db() as c:
         # Serializes admissions per owner across API instances.
         c.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (str(user),))
+        if project_id is not None:
+            require_project(c, user, project_id)
         old = c.execute("select * from synora.jobs where user_id=%s and idempotency_key=%s", (user,key)).fetchone()
         if old:
             if old["request_hash"] != digest:
@@ -36,8 +43,8 @@ def submit(user, key, spec):
             from synora.jobs where user_id=%s""", (user,)).fetchone()
         if counts["recent"] >= 5 or counts["active"] >= 3:
             raise RateLimited()
-        row = c.execute("""insert into synora.jobs(user_id,spec,idempotency_key,request_hash,simulated,provider)
-            values(%s,%s,%s,%s,true,'fixture') returning *""", (user,Jsonb(spec),key,digest)).fetchone()
+        row = c.execute("""insert into synora.jobs(user_id,spec,idempotency_key,request_hash,simulated,provider,project_id)
+            values(%s,%s,%s,%s,true,'fixture',%s) returning *""", (user,Jsonb(spec),key,digest,project_id)).fetchone()
         c.execute("insert into synora.credit_reservations(job_id) values(%s)", (row["id"],))
         return row
 
@@ -109,14 +116,17 @@ def fail(job, token):
             c.execute("update synora.credit_reservations set status='released',updated_at=now() where job_id=%s and status='reserved'",(job,))
 
 
-def music_library(owner, limit, cursor=None, include_simulated=True):
+def music_library(owner, limit, cursor=None, include_simulated=True, project_id=None):
     """Keyset pagination; cursor must identify a visible job belonging to owner."""
     with db() as c:
+        if project_id is not None:
+            require_project(c, owner, project_id)
         marker = None
         if cursor is not None:
             marker = c.execute("""select created_at,id from synora.jobs
-                where user_id=%s and id=%s and kind='music' and (%s or not simulated)""",
-                (owner,cursor,include_simulated)).fetchone()
+                where user_id=%s and id=%s and kind='music' and (%s or not simulated)
+                and (%s::uuid is null or project_id=%s)""",
+                (owner,cursor,include_simulated,project_id,project_id)).fetchone()
             if marker is None:
                 raise ValueError("invalid library cursor")
         query = """select j.*, jsonb_build_object(
@@ -125,10 +135,25 @@ def music_library(owner, limit, cursor=None, include_simulated=True):
             'simulated',a.simulated) as joined_asset
             from synora.jobs j left join synora.assets a
             on a.id=j.asset_id and a.user_id=j.user_id and a.job_id=j.id
-            where j.user_id=%s and j.kind='music' and (%s or not j.simulated)"""
+            where j.user_id=%s and j.kind='music' and (%s or not j.simulated)
+            and (%s::uuid is null or j.project_id=%s)"""
         if marker is not None:
             return c.execute(query+""" and (j.created_at,j.id)<(%s,%s)
                 order by j.created_at desc,j.id desc limit %s""",
-                (owner,include_simulated,marker["created_at"],marker["id"],limit+1)).fetchall()
+                (owner,include_simulated,project_id,project_id,marker["created_at"],marker["id"],limit+1)).fetchall()
         return c.execute(query+" order by j.created_at desc,j.id desc limit %s",
-                         (owner,include_simulated,limit+1)).fetchall()
+                         (owner,include_simulated,project_id,project_id,limit+1)).fetchall()
+
+
+def require_project(conn, owner, project_id):
+    """Never distinguish another owner's project from an absent project."""
+    row = conn.execute("""select id,name,created_at from synora.projects
+        where id=%s and user_id=%s""", (project_id,owner)).fetchone()
+    if row is None:
+        raise ProjectNotFound()
+    return row
+
+
+def owned_project(owner, project_id):
+    with db() as conn:
+        return require_project(conn, owner, project_id)

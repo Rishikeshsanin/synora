@@ -206,3 +206,65 @@ def test_reconcile_only_definitive_stale_fixture(monkeypatch):
     os.utime(committed_path,(old,old))
     assert not reconcile_attempt(committed_key)
     assert committed_path.is_file()
+
+
+def test_project_recipes_and_scoped_library(monkeypatch):
+    uid,other=uuid4(),uuid4()
+    token_a,token_b=str(uuid4()),str(uuid4())
+    monkeypatch.setattr(api,"settings",replace(settings,fixture_tokens=json.dumps({
+        token_a:str(uid),token_b:str(other)}),supabase_url="",supabase_key=""))
+    a={"Authorization":f"Bearer {token_a}"}
+    b={"Authorization":f"Bearer {token_b}"}
+    with TestClient(app) as client:
+        project_path="/v1/projects"
+        first=client.post(project_path,json={"name":"Album one"},headers=a)
+        assert first.status_code==201
+        p=first.json()["id"]
+        q=client.post(project_path,json={"name":"Album two"},headers=a).json()["id"]
+        foreign=client.post(project_path,json={"name":"Private"},headers=b).json()["id"]
+        assert client.get(project_path+"/"+p,headers=a).json()["name"]=="Album one"
+        assert client.get(project_path+"/"+p,headers=b).status_code==404
+        assert {x["id"] for x in client.get(project_path,headers=a).json()}=={p,q}
+        path="/v1/music/jobs"
+        headers=a|{"Idempotency-Key":"project-recipe"}
+        spec=SPEC|{"mode":"vocals","lyrics":"Original test lyrics","language":"Telugu","bpm":96,
+                   "genres":["ambient"],"moods":["calm"],"instruments":["piano"]}
+        assert client.post(path,params={"project_id":foreign},headers=headers,json=spec).status_code==404
+        assert client.post(path,params={"project_id":str(uuid4())},headers=headers,json=spec).status_code==404
+        res=client.post(path,params={"project_id":p},headers=headers,json=spec)
+        assert res.status_code==202,res.text
+        job=res.json()["id"]
+        assert client.post(path,params={"project_id":p},headers=headers,json=spec).json()["id"]==job
+        assert client.post(path,params={"project_id":q},headers=headers,json=spec).status_code==409
+        assert client.post(path,headers=headers,json=spec).status_code==409
+        recipe_path=f"/v1/jobs/{job}/recipe"
+        assert client.get(recipe_path,headers=a).json()=={"project_id":p,"spec":spec}
+        assert client.get(recipe_path,headers=b).status_code==404
+        assert client.get(recipe_path).status_code==401
+        assert run_one()
+        assert client.get(recipe_path,headers=a).json()["spec"]==spec
+        other_job=client.post(path,params={"project_id":q},headers=a|{"Idempotency-Key":"other-project"},json=SPEC)
+        assert other_job.status_code==202
+        other_id=other_job.json()["id"]
+        client.post(f"/v1/jobs/{other_id}/cancel",headers=a)
+        library="/v1/music/library"
+        assert client.get(library,params={"project_id":foreign},headers=a).status_code==404
+        assert client.get(library,params={"project_id":p,"cursor":other_id},headers=a).status_code==422
+        page=client.get(library,params={"project_id":p},headers=a).json()
+        assert len(page["items"])==1 and page["next_cursor"] is None
+        assert page["items"][0]["job"]["id"]==job
+        assert client.get(page["items"][0]["asset"]["url"]).content[:4]==b"RIFF"
+        assert {x["job"]["id"] for x in client.get(library,headers=a).json()["items"]}=={job,other_id}
+        with db.db() as conn:
+            row=conn.execute("select project_id from synora.jobs where id=%s",(job,)).fetchone()
+            assert str(row["project_id"])==p
+            assert conn.execute("select count(*) as n from synora.credit_reservations where job_id=%s",
+                                (job,)).fetchone()["n"]==1
+
+
+def test_legacy_idempotency_hash_is_preserved():
+    uid=uuid4()
+    legacy=db.submit(uid,"legacy-no-project",SPEC)
+    assert legacy["request_hash"]==db.canonical_hash(SPEC)
+    assert db.submit(uid,"legacy-no-project",SPEC)["id"]==legacy["id"]
+    db.cancel(uid,legacy["id"])
