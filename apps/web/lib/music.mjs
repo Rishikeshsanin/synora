@@ -8,13 +8,15 @@ export function musicSpec(form) {
   if (bpm !== null && (!Number.isInteger(bpm) || bpm < 40 || bpm > 200)) throw new Error('Tempo must be 40–200 BPM.');
   if (!['instrumental','vocals'].includes(form.mode)) throw new Error('Choose a vocal mode.');
   const lyrics = form.mode === 'vocals' ? form.lyrics.trim() || null : null;
-  if (lyrics && lyrics.length > 4000) throw new Error('Lyrics must be at most 4000 characters.');
+  if (lyrics && lyrics.length > 6000) throw new Error('Lyrics must be at most 6000 characters.');
   const tags = key => {
     const values = form[key];
-    if (!Array.isArray(values) || values.length > 8 || values.some(v => typeof v !== 'string' || !v.trim() || v.length > 80)) throw new Error('Choose at most eight valid ' + key + '.');
-    return [...new Set(values)];
+    if (!Array.isArray(values) || values.length > 12 || values.some(v => typeof v !== 'string' || !v.trim() || v.trim().length > 64)) throw new Error('Choose at most twelve valid ' + key + '.');
+    return [...new Set(values.map(v => v.trim()))];
   };
-  return {prompt,mode:form.mode,genres:tags('genres'),moods:tags('moods'),instruments:tags('instruments'),duration_seconds,bpm,lyrics,language:form.mode === 'vocals' ? form.language || null : null};
+  const language = form.mode === 'vocals' ? form.language.trim() || null : null;
+  if (language && language.length > 32) throw new Error('Language must be at most 32 characters.');
+  return {prompt,mode:form.mode,genres:tags('genres'),moods:tags('moods'),instruments:tags('instruments'),duration_seconds,bpm,lyrics,language};
 }
 export function validateJob(job) {
   if (!job || typeof job.id !== 'string' || !['queued','running','succeeded','failed','cancelled'].includes(job.status) || typeof job.progress !== 'number' || !Number.isFinite(job.progress) || job.progress < 0 || job.progress > 100 || typeof job.simulated !== 'boolean') throw new Error('Invalid job response.');
@@ -23,7 +25,8 @@ export function validateJob(job) {
 }
 export function validateAsset(asset, simulated) {
   if (!asset || asset.kind !== 'audio' || typeof asset.id !== 'string' || typeof asset.url !== 'string' || typeof asset.mime_type !== 'string' || !asset.mime_type.startsWith('audio/') || asset.simulated !== simulated) throw new Error('Invalid audio asset or provenance mismatch.');
-  const url = new URL(asset.url);
-  if (!['https:','http:'].includes(url.protocol) || (url.protocol === 'http:' && !['localhost','127.0.0.1','[::1]'].includes(url.hostname))) throw new Error('Unsafe asset URL.');
+  let url;
+  try { url = new URL(asset.url); } catch { throw new Error('Invalid asset URL.'); }
+  if (url.username || url.password || !['https:','http:'].includes(url.protocol) || (url.protocol === 'http:' && !['localhost','127.0.0.1','[::1]'].includes(url.hostname))) throw new Error('Unsafe asset URL.');
   return asset;
 }
