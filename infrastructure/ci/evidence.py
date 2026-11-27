@@ -33,7 +33,7 @@ def write_json(path, data):
     path.write_text(json.dumps(data, indent=2) + "\n")
 
 
-def stage_media(root, destination):
+def stage_media(root, destination, campaign=False):
     root, destination = Path(root).resolve(), Path(destination)
     destination.mkdir(parents=True, exist_ok=False)
     ratios = ("9x16", "16x9", "1x1")
@@ -43,11 +43,13 @@ def stage_media(root, destination):
         "synora-editorial-demo": [r + "-" + style + ".mp4" for r in ratios
                                   for style in ("classic", "editorial-v1")],
     }
+    if campaign:
+        allowlist = {"synora-campaign-render": [r + ".mp4" for r in ratios]}
     results = []
     for group, names in allowlist.items():
         for name in names:
             source = root / group / name
-            if (source.is_symlink() or not source.resolve().is_relative_to(root)
+            if (source.is_symlink() or source.resolve() != source
                     or not source.is_file() or not 0 < source.stat().st_size <= 50 * 1024 * 1024):
                 raise ValueError("Missing or invalid synthetic render: " + group + "/" + name)
             probe = json.loads(subprocess.check_output([
@@ -72,7 +74,7 @@ if __name__ == "__main__":
     mode, destination, *paths = sys.argv[1:]
     if mode == "junit":
         write_json(destination, junit_summary(paths))
-    elif mode == "media" and len(paths) == 1:
-        stage_media(destination, paths[0])
+    elif mode in ("media", "campaign") and len(paths) == 1:
+        stage_media(destination, paths[0], campaign=(mode == "campaign"))
     else:
         raise SystemExit("Invalid evidence command")

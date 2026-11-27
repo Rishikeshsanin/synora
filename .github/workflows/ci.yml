@@ -269,6 +269,26 @@ jobs:
           path: ${{ runner.temp }}/synora-render-evidence/
           retention-days: 7
           if-no-files-found: error
+      - name: Offline multi-shot campaign render (original illustrations)
+        id: campaign
+        if: ${{ !cancelled() && steps.hd.outcome == 'success' }}
+        env:
+          OPENBLAS_NUM_THREADS: '1'
+        run: |
+          python -m benchmarks.media.campaign_fixture "$RUNNER_TEMP/synora-campaign-shots"
+          python -m benchmarks.media.campaign_demo "$RUNNER_TEMP/synora-campaign-shots/manifest.json" "$RUNNER_TEMP/synora-wave2-demo/original.wav" "$RUNNER_TEMP/synora-campaign-render"
+      - name: Stage verified generated campaign outputs
+        id: campaign_evidence
+        if: ${{ !cancelled() && steps.campaign.outcome == 'success' }}
+        run: python infrastructure/ci/evidence.py campaign "$RUNNER_TEMP" "$RUNNER_TEMP/synora-campaign-evidence"
+      - name: Upload synthetic-campaign-evidence (sanitized)
+        if: ${{ !cancelled() && steps.campaign_evidence.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: synthetic-campaign-evidence
+          path: ${{ runner.temp }}/synora-campaign-evidence/
+          retention-days: 7
+          if-no-files-found: error
   qa-db:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -293,9 +313,14 @@ jobs:
           export SYNORA_QA_DISPOSABLE_DB=1 SYNORA_QA_REQUIRE_DB=1
           python -m pytest -q -rs tests/integration/test_wave2_worker.py --junitxml="$RUNNER_TEMP/qa-db.xml"
           python infrastructure/ci/assert-no-skips.py "$RUNNER_TEMP/qa-db.xml"
+      - name: Independent cleanup filesystem acceptance (no skips)
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        run: |
+          python -m pytest -q -rs tests/integration/test_cleanup_filesystem.py --junitxml="$RUNNER_TEMP/cleanup.xml"
+          python infrastructure/ci/assert-no-skips.py "$RUNNER_TEMP/cleanup.xml"
       - name: Collect worker-evidence counts only
         if: always()
-        run: python3.12 infrastructure/ci/evidence.py junit "$RUNNER_TEMP/worker-evidence/summary.json" "$RUNNER_TEMP/qa-db.xml"
+        run: python3.12 infrastructure/ci/evidence.py junit "$RUNNER_TEMP/worker-evidence/summary.json" "$RUNNER_TEMP/qa-db.xml" "$RUNNER_TEMP/cleanup.xml"
       - name: Upload worker-evidence (sanitized)
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -326,8 +351,11 @@ jobs:
         id: qa_deps
       - run: python -m pip_audit --strict
         if: ${{ !cancelled() && steps.qa_deps.outcome == 'success' }}
-      - run: python -m pytest -q tests/integration/test_contract_shapes.py --junitxml="$RUNNER_TEMP/contracts.xml"
+      - name: API contract acceptance (no skips)
         if: ${{ !cancelled() && steps.qa_deps.outcome == 'success' }}
+        run: |
+          python -m pytest -q -rs tests/integration/test_contract_shapes.py --junitxml="$RUNNER_TEMP/contracts.xml"
+          python infrastructure/ci/assert-no-skips.py "$RUNNER_TEMP/contracts.xml"
       - name: API runtime lock
         id: api_deps
         if: ${{ !cancelled() && steps.qa_deps.outcome == 'success' }}
@@ -356,7 +384,7 @@ jobs:
         run: |
           source infrastructure/ci/fixture-env.sh
           export SYNORA_QA_REQUIRE_LIVE=1 SYNORA_QA_FIXTURE_POSTS=1 SYNORA_QA_API_URL="$API_PUBLIC_URL"
-          # Distinct fixture owners preserve the browser accounts\u0027 ordinary rate budget.
+          # Distinct fixture owners preserve the browser accounts' ordinary rate budget.
           export SYNORA_QA_TOKEN_A="$SYNORA_QA_LIVE_TOKEN_A" SYNORA_QA_TOKEN_B="$SYNORA_QA_LIVE_TOKEN_B"
           python -m pytest -q -rs tests/integration/test_live_api.py --junitxml="$RUNNER_TEMP/live.xml"
           python infrastructure/ci/assert-no-skips.py "$RUNNER_TEMP/live.xml"
@@ -375,7 +403,7 @@ jobs:
         id: chromium
         if: ${{ !cancelled() && steps.web.outcome == 'success' }}
         run: python -m playwright install --with-deps chromium
-      - name: Prepare two native Studio sessions (Issue #29)
+      - name: 'Prepare two native Studio sessions (Issue #29)'
         id: native_fixture
         if: ${{ !cancelled() && steps.chromium.outcome == 'success' }}
         env:
