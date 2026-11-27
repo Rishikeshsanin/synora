@@ -6,7 +6,7 @@ import uuid
 import wave
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse
 
 import httpx
 import pytest
@@ -92,6 +92,10 @@ def test_fixture_job_idempotency_isolation_and_wav(client, owners):
     with ThreadPoolExecutor(max_workers=4) as pool:
         jobs = list(pool.map(lambda _: submit(), range(4)))
     assert len({j['id'] for j in jobs}) == 1, 'Duplicate jobs created for one key'
+    # Backend draft #8 proposes 409 for reuse with a different payload.
+    conflict = client.post('/v1/music/jobs', json=spec() | {'prompt': 'Different QA prompt'}, headers=headers)
+    assert conflict.status_code == 409
+    check_error(conflict.json())
     job_id = jobs[0]['id']
     path = '/v1/jobs/' + job_id
     denied(client.get(path, headers=b))
@@ -123,6 +127,14 @@ def test_fixture_job_idempotency_isolation_and_wav(client, owners):
     assert asset['mime_type'] in ('audio/wav', 'audio/x-wav', 'audio/wave')
     url = urljoin(str(client.base_url), asset['url'])
     assert urlparse(url).hostname in ('localhost', '127.0.0.1', '::1')
+    # Candidate backend #8 signs expires, download and asset ID. No credentials sent.
+    parsed = urlparse(url)
+    query = dict(parse_qsl(parsed.query))
+    assert query.get('sig') and query.get('expires')
+    query['sig'] = '0' * 64 if query['sig'] != '0' * 64 else '1' * 64
+    tampered = parsed._replace(query=urlencode(query)).geturl()
+    assert httpx.get(tampered, timeout=10, follow_redirects=False).status_code == 403
+    assert httpx.get(parsed._replace(query='').geturl(), timeout=10, follow_redirects=False).status_code in (400, 401, 403, 404, 422)
     with httpx.stream('GET', url, timeout=15, follow_redirects=False) as response:
         assert response.status_code == 200
         data = bytearray()
