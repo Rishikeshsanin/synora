@@ -79,14 +79,15 @@ def progress(job, token, value):
             where id=%s and lease_token=%s and status='running' and lease_until>now()""",
             (min(99,max(0,value)),job,token)).rowcount == 1
 
-def complete(job, token, key, duration, provenance):
+def complete(job, token, key, duration, provenance, mime_type='audio/wav'):
+    if mime_type != 'audio/wav': raise ValueError('fixture must be WAV')
     with db() as c:
         row = c.execute("""select * from synora.jobs where id=%s and lease_token=%s
             and status='running' and lease_until>now() for update""", (job,token)).fetchone()
         if not row: return False
         asset = c.execute("""insert into synora.assets(user_id,job_id,kind,mime_type,duration_seconds,storage_key,simulated,provenance)
-            values(%s,%s,'audio','audio/wav',%s,%s,true,%s) returning id""",
-            (row["user_id"],job,duration,key,Jsonb(provenance))).fetchone()
+            values(%s,%s,'audio',%s,%s,%s,true,%s) returning id""",
+            (row["user_id"],job,mime_type,duration,key,Jsonb(provenance))).fetchone()
         c.execute("""update synora.jobs set status='succeeded',progress=100,asset_id=%s,lease_token=null,
             lease_until=null,error=null,updated_at=now() where id=%s""",(asset["id"],job))
         c.execute("update synora.credit_reservations set status='settled',updated_at=now() where job_id=%s and status='reserved'", (job,))

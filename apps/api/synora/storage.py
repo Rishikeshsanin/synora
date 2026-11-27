@@ -22,6 +22,9 @@ def put_local(key, data):
         os.fsync(f.fileno())
     os.replace(temporary,path)
 
+def delete_local(key):
+    local_path(key).unlink(missing_ok=True)
+
 def signature(asset, expiry, download):
     return hmac.new(settings.signing_key.encode(),f"{asset}:{expiry}:{int(download)}".encode(),hashlib.sha256).hexdigest()
 

@@ -2,6 +2,8 @@ import json
 import logging
 import time
 import secrets
+import shutil
+import os
 from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID, uuid4
@@ -14,7 +16,8 @@ from starlette.exceptions import HTTPException
 from .config import settings
 from .models import MusicSpec, ProjectSpec
 from . import db
-from .provider import FixtureProvider
+from .provider import fixture_capabilities, to_engine_spec
+from engines.music.core import MusicError
 from .storage import local_url, local_path, valid_signature, SupabaseStorage
 
 log=logging.getLogger("synora.api")
@@ -88,19 +91,26 @@ def ready():
         with db.db() as c:
             c.execute("select id from synora.jobs limit 0")
         if settings.provider!="fixture": abort(503,"provider_disabled","No approved provider")
+        if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+            abort(503,"not_ready","Audio validation tools unavailable")
+        settings.media_dir.mkdir(parents=True, exist_ok=True)
+        if not os.access(settings.media_dir, os.W_OK): abort(503,"not_ready","Media storage unavailable")
         return {"status":"ready","simulated":True}
     except HTTPException: raise
     except Exception: abort(503,"not_ready","Database unavailable")
 
 @app.get("/v1/music/capabilities")
 def capabilities():
-    return FixtureProvider.capabilities if settings.provider=="fixture" else {"available":False,"simulated":False}
+    return fixture_capabilities() if settings.provider=="fixture" else {"available":False,"simulated":False}
 
 @app.post("/v1/music/jobs",status_code=202)
 def submit(spec:MusicSpec,uid:Annotated[UUID,Depends(user)],key:Annotated[str,Header(alias="Idempotency-Key",min_length=1,max_length=128)]):
     if not key.strip(): abort(422,"invalid_request","Idempotency key required")
     if settings.provider!="fixture": abort(503,"provider_disabled","No approved provider")
-    try: return job_view(db.submit(uid,key,spec.model_dump(mode="json")))
+    try:
+        to_engine_spec(spec)
+        return job_view(db.submit(uid,key,spec.model_dump(mode="json")))
+    except (ValueError, MusicError): abort(422,"unsupported_spec","Music specification unsupported")
     except db.Conflict: abort(409,"idempotency_conflict","Key already used for a different request")
     except db.RateLimited: abort(429,"rate_limited","Generation limit reached")
 
@@ -125,7 +135,7 @@ def media(id:UUID,expires:int,download:bool,sig:str):
     with db.db() as c:
         row=c.execute("select * from synora.assets where id=%s and simulated",(id,)).fetchone()
     if not row or not local_path(row["storage_key"]).is_file(): abort(404,"not_found","Asset not found")
-    return FileResponse(local_path(row["storage_key"]),media_type="audio/wav",filename=f"{id}.wav" if download else None)
+    return FileResponse(local_path(row["storage_key"]),media_type=row["mime_type"],filename=f"{id}.wav" if download else None)
 
 @app.post("/v1/projects",status_code=201)
 def create_project(spec:ProjectSpec,uid:Annotated[UUID,Depends(user)]):
