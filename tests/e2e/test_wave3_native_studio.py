@@ -34,10 +34,12 @@ def test_native_studio_two_authenticated_users():
     state_b = Path(required("SYNORA_QA_STORAGE_STATE_B"))
     assert state_a.is_file() and state_b.is_file()
     assert state_a.resolve() != state_b.resolve()
-    assert state_a.read_bytes() != state_b.read_bytes()
+    if state_a.read_bytes() == state_b.read_bytes():
+        pytest.fail("Fixture browser states must differ", pytrace=False)
     token_a = required("SYNORA_QA_TOKEN_A")
     token_b = required("SYNORA_QA_TOKEN_B")
-    assert token_a != token_b
+    if token_a == token_b:
+        pytest.fail("Fixture tokens must differ", pytrace=False)
 
     with sync_playwright() as p:
         browser = p.chromium.launch()
@@ -72,6 +74,7 @@ def test_native_studio_two_authenticated_users():
                     pytest.fail("Unexpected authenticated principal", pytrace=False)
                 job = result.json()["id"]
                 jobs.append(job)
+                expect(page.get_by_text("succeeded · 100%", exact=False)).to_be_visible(timeout=90000)
                 expect(page.get_by_text("Server fixture · Not AI-generated", exact=False).first).to_be_visible(timeout=90000)
                 audio = page.get_by_label("Track playback")
                 expect(audio).to_be_visible()
@@ -115,8 +118,20 @@ def test_native_studio_two_authenticated_users():
                 for route in ("/v1/jobs/" + jobs[other], "/v1/assets/" + assets[other]):
                     assert context.request.get(api + route, headers=headers).status in (403, 404)
                 page = context.pages[0]
+                page.reload(wait_until="domcontentloaded")
+                page.get_by_role("button", name="Creative Library").click()
+                own_track = page.get_by_test_id("library-track-" + jobs[index])
+                expect(own_track).to_be_visible(timeout=20000)
+                expect(page.get_by_test_id("library-track-" + jobs[other])).to_have_count(0)
+                expect(own_track).to_contain_text("Server fixture · Not AI-generated")
+                own_track.click()
+                expect(page.get_by_label("Track playback")).to_be_visible()
+                page.get_by_role("button", name="Music Studio").click()
                 page.get_by_role("button", name="Sign out").click()
                 expect(page.get_by_role("button", name="Send sign-in link")).to_be_visible(timeout=15000)
+                expect(page.get_by_label("Track playback")).to_have_count(0)
+                page.get_by_role("button", name="Creative Library").click()
+                expect(page.get_by_test_id("library-track-" + jobs[index])).to_have_count(0)
                 expect(page.get_by_label("Track playback")).to_have_count(0)
         finally:
             for context in contexts:
