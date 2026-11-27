@@ -47,3 +47,17 @@ test("local fixture library is labeled and does not offer server cancellation",a
  await page.getByRole("button",{name:"Creative Library"}).click();
  await expect(page.getByRole("button",{name:/Local preview.*Local fixture/})).toBeVisible();
 });
+
+test("local previews never masquerade as persistent account history",async({page})=>{
+ await page.goto("/studio");await page.getByRole("button",{name:"Creative Library"}).click();
+ await expect(page.getByText("Sign in to see saved tracks.")).toBeVisible();
+ await page.getByRole("button",{name:"Music Studio"}).click();
+ await page.getByRole("checkbox",{name:"Explicit local demo"}).check();
+ await page.getByLabel("Describe your sound").fill("Session-only test");
+ await page.getByRole("button",{name:"Play local fixture"}).click();
+ await page.getByRole("button",{name:"Creative Library"}).click();
+ await expect(page.getByRole("button",{name:/Local preview.*Local fixture/})).toBeVisible();
+ await page.reload();await page.getByRole("button",{name:"Creative Library"}).click();
+ await expect(page.getByRole("button",{name:/Local preview.*Local fixture/})).toHaveCount(0);
+ await expect(page.getByText("Sign in to see saved tracks.")).toBeVisible();
+});

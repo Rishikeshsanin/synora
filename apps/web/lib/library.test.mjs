@@ -1,0 +1,13 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {libraryPath,parseLibraryPage,mergeLibraryItems} from './library.mjs';
+const a='00000000-0000-0000-0000-000000000001', b='00000000-0000-0000-0000-000000000002', audio='00000000-0000-0000-0000-000000000003';
+const job={id:a,status:'succeeded',progress:100,simulated:true,asset_id:audio,created_at:'2026-11-27T20:00:00Z'};
+const asset={id:audio,kind:'audio',mime_type:'audio/wav',simulated:true,url:'https://example.com/audio?sig=secret',duration_seconds:30,expires_at:'2026-11-27T20:05:00Z'};
+const row={job,asset,prompt:'Private prompt'};
+const queued={job:{...job,id:b,status:'queued',progress:0,asset_id:null},asset:null,prompt:'Pending prompt'};
+test('library endpoint uses bounded encoded cursor',()=>{assert.equal(libraryPath(),'/v1/music/library?limit=30');assert.equal(libraryPath(a),'/v1/music/library?limit=30&cursor='+a);assert.throws(()=>libraryPath('x&limit=100'))});
+test('library strips signed URL even if expired and retains provenance and pending rows',()=>{const page=parseLibraryPage({items:[row,queued],next_cursor:b});assert.deepEqual(page.items[0].asset,{id:audio,duration_seconds:30});assert.equal(page.items[0].job.simulated,true);assert.equal(page.items[1].asset,null);assert.equal(page.next_cursor,b);assert.equal(JSON.stringify(page).includes('sig=secret'),false)});
+test('reject mismatched asset and provenance, malformed prompt and invalid state',()=>{for(const patch of [{asset:{...asset,id:b}},{asset:{...asset,simulated:false}},{asset:{...asset,duration_seconds:-1}},{prompt:42},{job:{...job,status:'queued'}}])assert.throws(()=>parseLibraryPage({items:[{...row,...patch}],next_cursor:null}))});
+test('pagination rejects duplicate, invalid and nonadvancing cursors',()=>{for(const payload of [{items:[row,row],next_cursor:null},{items:[row],next_cursor:b},{items:[],next_cursor:a},{items:[row],next_cursor:'x'}])assert.throws(()=>parseLibraryPage(payload));assert.throws(()=>parseLibraryPage({items:[row],next_cursor:a},a));assert.deepEqual(parseLibraryPage({items:[],next_cursor:null}),{items:[],next_cursor:null})});
+test('append deduplicates while replacing stale job states',()=>{const previous=[row,queued];const updated={...queued,job:{...queued.job,status:'cancelled'}};assert.deepEqual(mergeLibraryItems(previous,[updated]),[row,updated]);assert.deepEqual(mergeLibraryItems([row],[queued]),[row,queued])});
