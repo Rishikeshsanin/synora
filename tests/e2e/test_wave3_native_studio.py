@@ -52,6 +52,7 @@ def test_native_studio_two_authenticated_users():
         try:
             jobs = []
             assets = []
+            prompts = []
             for index, context in enumerate(contexts):
                 page = context.new_page()
                 response = page.goto(web + "/studio", wait_until="domcontentloaded")
@@ -61,7 +62,9 @@ def test_native_studio_two_authenticated_users():
                 expect(page.get_by_label("Explicit local demo")).not_to_be_checked()
                 expect(page.get_by_role("button", name="Create server fixture")).to_be_enabled(timeout=15000)
                 assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
-                page.get_by_label("Describe your sound").fill("Native independent fixture " + str(uuid4()))
+                prompt = "Native independent fixture " + str(uuid4()) + " <b>literal</b>"
+                prompts.append(prompt)
+                page.get_by_label("Describe your sound").fill(prompt)
                 with page.expect_response(
                     lambda res: res.url == api + "/v1/music/jobs" and res.request.method == "POST",
                     timeout=20000
@@ -124,8 +127,20 @@ def test_native_studio_two_authenticated_users():
                 expect(own_track).to_be_visible(timeout=20000)
                 expect(page.get_by_test_id("library-track-" + jobs[other])).to_have_count(0)
                 expect(own_track).to_contain_text("Server fixture · Not AI-generated")
-                own_track.click()
+                expect(own_track).to_contain_text(prompts[index])
+                expect(page.get_by_text(prompts[other], exact=True)).to_have_count(0)
+                # User prompt must remain text, not interpreted markup.
+                expect(own_track.locator("b")).to_have_count(0)
+                with page.expect_response(lambda res: res.url.split("?")[0] == api + "/v1/assets/" + assets[index]
+                                          and res.request.method == "GET", timeout=20000) as fresh:
+                    own_track.click()
+                assert fresh.value.status == 200
                 expect(page.get_by_label("Track playback")).to_be_visible()
+                # A second page in the same browser session must clear account data too.
+                second = context.new_page()
+                second.goto(web + "/studio", wait_until="domcontentloaded")
+                second.get_by_role("button", name="Creative Library").click()
+                expect(second.get_by_test_id("library-track-" + jobs[index])).to_be_visible(timeout=20000)
                 page.get_by_role("button", name="Music Studio").click()
                 page.get_by_role("button", name="Sign out").click()
                 expect(page.get_by_role("button", name="Send sign-in link")).to_be_visible(timeout=15000)
@@ -133,6 +148,10 @@ def test_native_studio_two_authenticated_users():
                 page.get_by_role("button", name="Creative Library").click()
                 expect(page.get_by_test_id("library-track-" + jobs[index])).to_have_count(0)
                 expect(page.get_by_label("Track playback")).to_have_count(0)
+                expect(second.get_by_text("Sign in to see saved tracks.")).to_be_visible(timeout=15000)
+                expect(second.get_by_test_id("library-track-" + jobs[index])).to_have_count(0)
+                expect(second.get_by_label("Track playback")).to_have_count(0)
+                second.close()
         finally:
             for context in contexts:
                 context.close()
