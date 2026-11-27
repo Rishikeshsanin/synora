@@ -1,0 +1,17 @@
+{
+  "python": "3.13.5",
+  "ffmpeg": "7.1.5-0+deb13u1",
+  "base_commit": "2a802b71b36e08684ab6562d21e4f4981984d9b6",
+  "simulated": true,
+  "cases": 9,
+  "passed": 9,
+  "decoded_seconds": 330,
+  "max_duration_error": 0,
+  "bytes": 10560396,
+  "median_latency_seconds": 0.3777725330000976,
+  "matching_wave3_sha256": 9,
+  "real_inference_executed": false,
+  "estimated_cost_usd": 0,
+  "quality_score": null,
+  "prompt_adherence_score": null
+}

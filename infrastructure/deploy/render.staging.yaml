@@ -1,0 +1,26 @@
+# Proposal only. Import explicitly after lead approval; no worker or database provisioned.
+services:
+  - type: web
+    name: synora-api-staging
+    runtime: docker
+    plan: free
+    branch: main
+    autoDeployTrigger: off
+    dockerfilePath: ./infrastructure/docker/api.Dockerfile
+    dockerContext: .
+    healthCheckPath: /ready
+    envVars:
+      - key: SYNORA_ENV
+        value: staging
+      - key: SYNORA_REAL_GENERATION_ENABLED
+        value: "false"
+      - key: SYNORA_MONTHLY_BUDGET_MICROUSD
+        value: "0"
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false

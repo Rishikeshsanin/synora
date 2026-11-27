@@ -1,0 +1,22 @@
+test_ace_language_rejection_before_network (test_engine.EngineTests.test_ace_language_rejection_before_network) ... ok
+test_ace_protocol (test_engine.EngineTests.test_ace_protocol) ... ok
+test_ace_rejects_external_audio_and_wrong_model (test_engine.EngineTests.test_ace_rejects_external_audio_and_wrong_model) ... ok
+test_audio_invalid_and_master (test_engine.EngineTests.test_audio_invalid_and_master) ... ok
+test_budget_prevents_network (test_engine.EngineTests.test_budget_prevents_network) ... ok
+test_fixture_deterministic_and_labeled (test_engine.EngineTests.test_fixture_deterministic_and_labeled) ... ok
+test_fixture_production_and_cancel (test_engine.EngineTests.test_fixture_production_and_cancel) ... ok
+test_lyria_protocol (test_engine.EngineTests.test_lyria_protocol) ... ok
+test_registry_fails_closed (test_engine.EngineTests.test_registry_fails_closed) ... ok
+test_validation (test_engine.EngineTests.test_validation) ... ok
+test_api_payload_bounds_and_normalization (test_wave2.Wave2Tests.test_api_payload_bounds_and_normalization) ... ok
+test_capabilities_are_json_and_honest (test_wave2.Wave2Tests.test_capabilities_are_json_and_honest) ... ok
+test_lease_callback_cleans_partial_artifact (test_wave2.Wave2Tests.test_lease_callback_cleans_partial_artifact) ... ok
+test_lyria_records_id_before_invalid_audio (test_wave2.Wave2Tests.test_lyria_records_id_before_invalid_audio) ... ok
+test_production_denies_even_approved_real (test_wave2.Wave2Tests.test_production_denies_even_approved_real) ... ok
+test_ace_rejects_malformed_result_without_download (test_wave3.ProviderSafetyTests.test_ace_rejects_malformed_result_without_download) ... ok
+test_lyria_preserves_upstream_id_for_terminal_or_incomplete_response (test_wave3.ProviderSafetyTests.test_lyria_preserves_upstream_id_for_terminal_or_incomplete_response) ... ok
+
+----------------------------------------------------------------------
+Ran 17 tests in 2.447s
+
+OK
