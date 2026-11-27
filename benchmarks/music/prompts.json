@@ -1,0 +1,166 @@
+[
+  {
+    "id": "english-pop",
+    "prompt": "An original bright indie pop song with a memorable chorus, warm acoustic guitar and soft drums.",
+    "mode": "vocals",
+    "genres": [
+      "pop"
+    ],
+    "moods": [
+      "hopeful"
+    ],
+    "instruments": [
+      "guitar",
+      "drums"
+    ],
+    "duration_seconds": 30,
+    "bpm": 110,
+    "language": "en",
+    "lyrics": "[Verse]\nMorning opens up the sky\nWe find our wings and learn to fly\n[Chorus]\nStep by step we find our way\nLight the road to brighter days"
+  },
+  {
+    "id": "telugu-song",
+    "prompt": "Original melodic Telugu film-inspired song, gentle expressive vocals and acoustic orchestration.",
+    "mode": "vocals",
+    "genres": [
+      "Indian pop"
+    ],
+    "moods": [
+      "warm"
+    ],
+    "instruments": [
+      "flute",
+      "strings",
+      "tabla"
+    ],
+    "duration_seconds": 30,
+    "bpm": 90,
+    "language": "te",
+    "lyrics": "[Verse]\nవెన్నెల దారిలో నడిచే వేళ\nమనసులో కొత్త ఆశల మేళా\n[Chorus]\nకలలే మనకు రెక్కలై\nప్రతి అడుగూ వెలుగులై"
+  },
+  {
+    "id": "hindi-song",
+    "prompt": "Original Hindi acoustic ballad, intimate vocals and a rising chorus.",
+    "mode": "vocals",
+    "genres": [
+      "ballad"
+    ],
+    "moods": [
+      "reflective"
+    ],
+    "instruments": [
+      "acoustic guitar",
+      "tabla"
+    ],
+    "duration_seconds": 30,
+    "bpm": 85,
+    "language": "hi",
+    "lyrics": "[Verse]\nनई सुबह की नई कहानी\nहवा सुनाए बात सुहानी\n[Chorus]\nचलें सितारों की ओर हम\nहर कदम पे रोशन हो मन"
+  },
+  {
+    "id": "indian-classical",
+    "prompt": "Indian classical inspired instrumental, sitar melodic improvisation with tanpura drone and tabla rhythmic accompaniment.",
+    "mode": "instrumental",
+    "genres": [
+      "Indian classical"
+    ],
+    "moods": [
+      "serene"
+    ],
+    "instruments": [
+      "sitar",
+      "tanpura",
+      "tabla"
+    ],
+    "duration_seconds": 30,
+    "bpm": 80
+  },
+  {
+    "id": "cinematic",
+    "prompt": "Original cinematic orchestral cue, quiet piano opening, rising strings, decisive percussion climax, no vocals.",
+    "mode": "instrumental",
+    "genres": [
+      "cinematic"
+    ],
+    "moods": [
+      "epic"
+    ],
+    "instruments": [
+      "piano",
+      "strings",
+      "timpani"
+    ],
+    "duration_seconds": 30,
+    "bpm": 95
+  },
+  {
+    "id": "edm",
+    "prompt": "Original electronic dance track with a clear build, synth bass drop and a steady four-on-the-floor beat.",
+    "mode": "instrumental",
+    "genres": [
+      "EDM"
+    ],
+    "moods": [
+      "energetic"
+    ],
+    "instruments": [
+      "synthesizer",
+      "kick drum"
+    ],
+    "duration_seconds": 30,
+    "bpm": 128
+  },
+  {
+    "id": "advertising",
+    "prompt": "Original uplifting instrumental for a fictional sustainable backpack ad, clean rhythm, catchy motif, confident ending.",
+    "mode": "instrumental",
+    "genres": [
+      "advertising"
+    ],
+    "moods": [
+      "optimistic"
+    ],
+    "instruments": [
+      "marimba",
+      "guitar",
+      "drums"
+    ],
+    "duration_seconds": 30,
+    "bpm": 115
+  },
+  {
+    "id": "text-to-vocals",
+    "prompt": "Write and sing original English lyrics about finding a path home; warm piano pop with a clear chorus.",
+    "mode": "vocals",
+    "genres": [
+      "pop"
+    ],
+    "moods": [
+      "nostalgic"
+    ],
+    "instruments": [
+      "piano"
+    ],
+    "duration_seconds": 30,
+    "bpm": 100,
+    "language": "en"
+  },
+  {
+    "id": "long-cinematic",
+    "prompt": "Original 90-second cinematic score with three clearly evolving sections, a rising string melody and a resolved ending.",
+    "mode": "instrumental",
+    "genres": [
+      "cinematic"
+    ],
+    "moods": [
+      "adventurous"
+    ],
+    "instruments": [
+      "strings",
+      "piano",
+      "drums"
+    ],
+    "duration_seconds": 90,
+    "bpm": 100
+  }
+]
