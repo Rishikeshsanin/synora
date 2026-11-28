@@ -1,0 +1,32 @@
+{
+  "source": "local synthetic controls only",
+  "base": "bc15cc249f385d7d8472cd01619000b2334442ee",
+  "python": "3.13.5",
+  "torch": "2.10.0+cpu",
+  "cuda_available": false,
+  "new_tests": 8,
+  "passed": 8,
+  "elapsed_seconds": 0.159,
+  "py_compile_passed": true,
+  "preflight_exit": 2,
+  "preflight_reason": "NVIDIA CUDA unavailable; no fallback or downloads",
+  "full_integrated_suite_run": false,
+  "real_inference_executed": false,
+  "paid_resources_activated": false,
+  "tone": {
+    "simulated": true,
+    "sha256": "e2735a1b85433c62a041d8f1551723378e1f336fc8faf6604ba5ae079c87d7ba",
+    "duration_seconds": 15,
+    "sample_rate": 48000,
+    "channels": 1,
+    "frames": 720000,
+    "bytes": 1440044,
+    "peak_dbfs": -13.979400086720375,
+    "rms_dbfs": -16.989700043363822,
+    "near_full_scale_fraction": 0,
+    "near_silent_sample_fraction": 0.0016666666666666668,
+    "ffmpeg_decode_exit": 0,
+    "technical_status": "passed",
+    "semantic_status": "pending_review"
+  }
+}
