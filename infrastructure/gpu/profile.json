@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "mode": "research-only",
+  "code_revision": "ca1e85fe9430179831e6bc6be790c332190a3866",
+  "snapshot_revision": "eb84216a8ece2d56388e401efc28061a0c30a209",
+  "model": "acestep-v15-turbo",
+  "min_gpu_free_mib": 10240,
+  "min_gpu_total_mib": 12288,
+  "min_host_available_mib": 12288,
+  "min_workspace_free_mib": 4096,
+  "max_session_seconds": 1800,
+  "max_cases": 6,
+  "max_duration_seconds": 120,
+  "max_batch_size": 1,
+  "cpu_threads": 4,
+  "precision_policy": "explicit verified FP32 and CPU/DiT offload for vocal experiments; no automatic precision fallback",
+  "generation_enabled": false,
+  "commercial_release_approved": false
+}
