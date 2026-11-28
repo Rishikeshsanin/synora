@@ -11,7 +11,7 @@ from PIL import Image
 
 from engines.creative.wave2 import approve, sha
 from engines.media import wave2
-from engines.media.soundtrack import bind_soundtrack, prepare, project_key, render_project
+from engines.media.soundtrack import bind_soundtrack, bind_timing, prepare, project_key, render_project
 
 
 class SoundtrackIntegrationTests(unittest.TestCase):
@@ -39,8 +39,8 @@ class SoundtrackIntegrationTests(unittest.TestCase):
                         scenes=[dict(id=f'scene-{i+1}', beats=4, rights_confirmed=True, asset_sha256=sha(p.read_bytes()), caption='A closer look') for i,p in enumerate(images)])
             master = b'k'*32
             cache = root/'private'
-            a = bind_soundtrack(base, receipt, 'a')
-            b = bind_soundtrack(base, receipt, 'b')
+            a = bind_timing(bind_soundtrack(base, receipt, 'a'), audio)
+            b = bind_timing(bind_soundtrack(base, receipt, 'b'), audio)
             sign_a = approve(a, 'fixture-reviewer', project_key(master, 'a'))
             sign_b = approve(b, 'fixture-reviewer', project_key(master, 'b'))
             # Real beat detection and FFmpeg; use preview resolution for regression cost.
@@ -61,6 +61,14 @@ class SoundtrackIntegrationTests(unittest.TestCase):
                 self.assertEqual(len(other['rendered']), 3)
                 with self.assertRaisesRegex(ValueError, 'project mismatch'):
                     render(a, sign_a, 'b', 'wrong.mp4')
+                stale = copy.deepcopy(a)
+                stale['approved_timing']['frames'] += 1
+                stale_approval = approve(stale, 'fixture-reviewer', project_key(master, 'a'))
+                with self.assertRaisesRegex(ValueError, 'reviewed timing'):
+                    render(stale, stale_approval, 'a', 'stale.mp4')
+                with patch('engines.media.soundtrack.measure', return_value={'lufs': -12., 'dbtp': -.2}):
+                    with self.assertRaisesRegex(ValueError, 'encoded soundtrack'):
+                        render(a, sign_a, 'a', 'too-loud.mp4')
                 tampered = copy.deepcopy(a)
                 tampered['soundtrack']['provenance']['source_id'] = 'changed'
                 with self.assertRaisesRegex(ValueError, 'approval'):
@@ -73,6 +81,8 @@ class SoundtrackIntegrationTests(unittest.TestCase):
                 source.write_bytes(source.read_bytes()+b'bad')
                 with self.assertRaisesRegex(ValueError, 'original soundtrack changed'):
                     render(a, sign_a, 'a', 'bad-source.mp4')
+            self.assertFalse((root/'stale.mp4').exists())
+            self.assertFalse((root/'too-loud.mp4').exists())
             self.assertFalse((root/'wrong.mp4').exists())
             self.assertFalse((root/'tampered.mp4').exists())
             self.assertFalse((root/'bad-preview.mp4').exists())

@@ -1,4 +1,5 @@
 import io
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -68,6 +69,31 @@ class SoundtrackTests(unittest.TestCase):
         self.assertFalse((b/'clip.mp4').exists())
         self.assertEqual(a, project_cache(root, key, 'project-A'))
         self.assertNotEqual(a, project_cache(root, b'y'*32, 'project-A'))
+
+    def test_private_root(self):
+        root = self.root/'public'
+        root.mkdir(mode=0o755)
+        if os.name == 'posix':
+            with self.assertRaisesRegex(ValueError, 'private'):
+                project_cache(root, b'x'*32, 'project-A')
+            real = self.root/'real'
+            real.mkdir(mode=0o700)
+            alias = self.root/'alias'
+            alias.symlink_to(real, target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, 'private'):
+                project_cache(alias, b'x'*32, 'project-A')
+
+    def test_long_stereo_intake(self):
+        for seconds, rate, subtype in ((15, 44100, 'FLOAT'), (60, 48000, 'PCM_24')):
+            t = np.arange(rate*seconds)/rate
+            y = .18*np.sin(2*np.pi*220*t)*np.exp(-8*(t % .5))
+            y += .48*np.sin(2*np.pi*880*t)*np.exp(-100*(t % .5))
+            sf.write(self.path, np.column_stack((y, y*.8)), rate, subtype=subtype)
+            data, receipt = prepare(self.path, self.provenance, self.rights, 0, len(y))
+            info = sf.info(io.BytesIO(data))
+            self.assertEqual((info.frames, info.samplerate, info.channels, info.subtype), (seconds*rate, rate, 2, 'PCM_16'))
+            self.assertLessEqual(receipt['after']['dbtp'], -2.)
+            self.assertLessEqual(receipt['after']['lufs'], -15.8)
 
     def test_binding_preserves_input(self):
         _, receipt = prepare(self.path, self.provenance, self.rights, 0, 4*self.rate)

@@ -157,6 +157,13 @@ def preview_timing(board, preview_path):
     return dict(start_frame=edges[0], cut_frames=[e-edges[0] for e in edges[1:-1]], frames=edges[-1]-edges[0])
 
 
+def bind_timing(board, preview_path):
+    """Freeze the reviewed timeline before issuing the project approval signature."""
+    result = json.loads(json.dumps(board))
+    result['approved_timing'] = preview_timing(result, preview_path)
+    return result
+
+
 def render_project(board, approval, master_key, project_id, source_path, preview_path,
                    image_paths, output, cache_root, *, evidence_paths=None):
     """Opt-in adapter to Wave 5. No automatic approval, external service or model."""
@@ -185,6 +192,8 @@ def render_project(board, approval, master_key, project_id, source_path, preview
         target = Path(td)/'result.mp4'
         staged.write_bytes(preview)
         timing = preview_timing(board, staged)
+        if board.get('approved_timing') != timing:
+            raise ValueError('reviewed timing missing or changed; renewed approval required')
         result = render_incremental(board, approval, key, image_paths, staged, target,
                                     project_cache(cache_root, master_key, project_id), evidence_paths=evidence_paths)
         if result['frames'] != timing['frames'] or result['cut_frames'] != timing['cut_frames']:
