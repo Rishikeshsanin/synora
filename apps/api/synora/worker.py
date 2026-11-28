@@ -3,7 +3,7 @@ import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from .config import settings
-from . import db
+from . import db, local_ace
 from .models import MusicSpec
 from .provider import to_engine_spec, validate_fixture
 from engines.music.core import GenerationContext
@@ -15,9 +15,10 @@ class LostLease(Exception):
     pass
 
 def run_one():
-    if settings.provider != "fixture" or settings.environment == "production":
+    if settings.provider not in ("fixture","ace-step") or settings.environment == "production":
         return False
-    row=db.claim()
+    real=settings.provider=="ace-step"
+    row=db.claim("ace-step") if real else db.claim()
     if not row:
         return False
     job, token=row["id"],row["lease_token"]
@@ -40,14 +41,28 @@ def run_one():
             last_check=time.monotonic()
         return lost
     try:
-        spec=to_engine_spec(MusicSpec.model_validate(row["spec"]))
+        public_spec=MusicSpec.model_validate(row["spec"])
+        spec=to_engine_spec(public_spec)
         with TemporaryDirectory(prefix="synora-attempt-") as tmp:
             directory=Path(tmp)
-            ctx=GenerationContext(output_dir=directory,seed=42,timeout_seconds=180,
-                                  cancelled=cancelled,progress=update,allow_real=False,
-                                  budget_usd=0,production=False)
-            output=FixtureProvider().generate(spec,ctx)
-            data,duration,provenance=validate_fixture(output,directory,spec.duration_seconds)
+            if real:
+                local_ace.validate_request(public_spec)
+                if row["experimental_config"]!=local_ace.options(settings):
+                    raise ValueError("local ACE configuration changed")
+                def upstream(upstream_id):
+                    if not db.record_upstream(job,token,upstream_id):
+                        raise LostLease()
+                ctx=local_ace.LocalAceContext(output_dir=directory,seed=42,timeout_seconds=900,
+                    cancelled=cancelled,progress=update,allow_real=True,budget_usd=0,
+                    production=False,upstream_job=upstream,config=settings)
+                output=local_ace.provider(settings,ctx).generate(spec,ctx)
+                data,duration,provenance=local_ace.validate_output(output,directory,public_spec,settings)
+            else:
+                ctx=GenerationContext(output_dir=directory,seed=42,timeout_seconds=180,
+                                      cancelled=cancelled,progress=update,allow_real=False,
+                                      budget_usd=0,production=False)
+                output=FixtureProvider().generate(spec,ctx)
+                data,duration,provenance=validate_fixture(output,directory,spec.duration_seconds)
             if not db.progress(job,token,90):
                 raise LostLease()
             put_local(key,data)
@@ -65,7 +80,7 @@ def run_one():
 
 def main():
     logging.basicConfig(level=logging.INFO)
-    if settings.provider != "fixture" or settings.environment == "production":
+    if settings.provider not in ("fixture","ace-step") or settings.environment == "production":
         raise SystemExit("No approved active provider")
     while True:
         try:

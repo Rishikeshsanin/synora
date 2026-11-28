@@ -150,7 +150,7 @@ def fail(job, token):
             c.execute("update synora.credit_reservations set status='released',updated_at=now() where job_id=%s and status='reserved'",(job,))
 
 
-def music_library(owner, limit, cursor=None, include_simulated=True, project_id=None):
+def music_library(owner, limit, cursor=None, include_simulated=True, project_id=None, include_experimental=True):
     """Keyset pagination; cursor must identify a visible job belonging to owner."""
     with db() as c:
         if project_id is not None:
@@ -158,9 +158,9 @@ def music_library(owner, limit, cursor=None, include_simulated=True, project_id=
         marker = None
         if cursor is not None:
             marker = c.execute("""select created_at,id from synora.jobs
-                where user_id=%s and id=%s and kind='music' and (%s or (not simulated and experimental_config is null))
+                where user_id=%s and id=%s and kind='music' and (%s or not simulated) and (%s or experimental_config is null)
                 and (%s::uuid is null or project_id=%s)""",
-                (owner,cursor,include_simulated,project_id,project_id)).fetchone()
+                (owner,cursor,include_simulated,include_experimental,project_id,project_id)).fetchone()
             if marker is None:
                 raise ValueError("invalid library cursor")
         query = """select j.*, jsonb_build_object(
@@ -169,14 +169,14 @@ def music_library(owner, limit, cursor=None, include_simulated=True, project_id=
             'simulated',a.simulated,'provenance',a.provenance) as joined_asset
             from synora.jobs j left join synora.assets a
             on a.id=j.asset_id and a.user_id=j.user_id and a.job_id=j.id
-            where j.user_id=%s and j.kind='music' and (%s or (not j.simulated and j.experimental_config is null))
+            where j.user_id=%s and j.kind='music' and (%s or not j.simulated) and (%s or j.experimental_config is null)
             and (%s::uuid is null or j.project_id=%s)"""
         if marker is not None:
             return c.execute(query+""" and (j.created_at,j.id)<(%s,%s)
                 order by j.created_at desc,j.id desc limit %s""",
-                (owner,include_simulated,project_id,project_id,marker["created_at"],marker["id"],limit+1)).fetchall()
+                (owner,include_simulated,include_experimental,project_id,project_id,marker["created_at"],marker["id"],limit+1)).fetchall()
         return c.execute(query+" order by j.created_at desc,j.id desc limit %s",
-                         (owner,include_simulated,project_id,project_id,limit+1)).fetchall()
+                         (owner,include_simulated,include_experimental,project_id,project_id,limit+1)).fetchall()
 
 
 def require_project(conn, owner, project_id):

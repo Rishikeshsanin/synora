@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException
 from .config import settings
 from .models import MusicSpec, ProjectSpec
-from . import db
+from . import db, local_ace
 from .provider import fixture_capabilities, to_engine_spec
 from engines.music.core import MusicError
 from .storage import local_url, local_path, valid_signature, SupabaseStorage
@@ -88,7 +88,11 @@ def user(authorization: Annotated[str|None,Header()]=None):
     if not settings.supabase_url or not settings.supabase_key:
         abort(401,"unauthorized","Invalid token")
     try:
-        response=httpx.get(settings.supabase_url+"/auth/v1/user",headers={"apikey":settings.supabase_key,"Authorization":f"Bearer {token}"},timeout=5)
+        if settings.provider=="ace-step":
+            with httpx.Client(trust_env=False,follow_redirects=False,timeout=5) as client:
+                response=client.get(settings.supabase_url+"/auth/v1/user",headers={"apikey":settings.supabase_key,"Authorization":f"Bearer {token}"})
+        else:
+            response=httpx.get(settings.supabase_url+"/auth/v1/user",headers={"apikey":settings.supabase_key,"Authorization":f"Bearer {token}"},timeout=5)
         if response.status_code in (401,403):
             abort(401,"unauthorized","Invalid token")
         response.raise_for_status()
@@ -100,7 +104,8 @@ def user(authorization: Annotated[str|None,Header()]=None):
         abort(503,"auth_unavailable","Authentication unavailable")
 
 def job_view(row):
-    if not row or (row["simulated"] and settings.environment=="production"):
+    if (not row or (row["simulated"] and settings.environment=="production")
+            or (row.get("experimental_config") is not None and settings.environment!="local")):
         abort(404,"not_found","Job not found")
     return {k:row[k] for k in ("id","status","progress","asset_id","error","created_at","updated_at","provider","simulated")}
 
@@ -111,15 +116,15 @@ def health(): return {"status":"ok"}
 def ready():
     try:
         with db.db() as c:
-            c.execute("select id from synora.jobs limit 0")
-        if settings.provider!="fixture":
+            c.execute("select id,experimental_config from synora.jobs limit 0")
+        if settings.provider not in ("fixture","ace-step"):
             abort(503,"provider_disabled","No approved provider")
         if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
             abort(503,"not_ready","Audio validation tools unavailable")
         settings.media_dir.mkdir(parents=True, exist_ok=True)
         if not os.access(settings.media_dir, os.W_OK):
             abort(503,"not_ready","Media storage unavailable")
-        return {"status":"ready","simulated":True}
+        return {"status":"ready","simulated":settings.provider=="fixture"}
     except HTTPException:
         raise
     except Exception:
@@ -127,7 +132,11 @@ def ready():
 
 @app.get("/v1/music/capabilities")
 def capabilities():
-    return fixture_capabilities() if settings.provider=="fixture" else {"available":False,"simulated":False}
+    if settings.provider=="fixture":
+        return fixture_capabilities()
+    if settings.provider=="ace-step":
+        return local_ace.capabilities(settings)
+    return {"available":False,"simulated":False}
 
 @app.post("/v1/music/jobs",status_code=202)
 def submit(spec:MusicSpec,uid:Annotated[UUID,Depends(user)],key:Annotated[str,Header(alias="Idempotency-Key",min_length=1,max_length=128)],project_id:UUID|None=None):
@@ -137,7 +146,12 @@ def submit(spec:MusicSpec,uid:Annotated[UUID,Depends(user)],key:Annotated[str,He
         abort(503,"provider_disabled","No approved provider")
     try:
         to_engine_spec(spec)
+        if settings.provider=="ace-step":
+            local_ace.validate_request(spec)
+            return job_view(db.submit(uid,key,spec.model_dump(mode="json"),project_id,local_ace.options(settings)))
         return job_view(db.submit(uid,key,spec.model_dump(mode="json"),project_id))
+    except db.ReconciliationRequired:
+        abort(503,"provider_reconciliation_required","Experimental generation needs operator reconciliation")
     except db.ProjectNotFound:
         abort(404,"not_found","Project not found")
     except (ValueError, MusicError):
@@ -153,21 +167,49 @@ def get_job(id:UUID,uid:Annotated[UUID,Depends(user)]): return job_view(db.owned
 @app.get("/v1/jobs/{id}/recipe")
 def recipe(id:UUID,uid:Annotated[UUID,Depends(user)]):
     row=db.owned_job(uid,id)
-    if not row or row["kind"]!="music" or (row["simulated"] and settings.environment=="production"):
+    job_view(row)
+    if row["kind"]!="music":
         abort(404,"not_found","Job not found")
     # Validate the stored public spec rather than returning arbitrary internal fields.
     return {"project_id":row["project_id"],"spec":MusicSpec.model_validate(row["spec"]).model_dump(mode="json")}
 
 
+@app.get("/v1/jobs/{id}/generation-info")
+def generation_info(id:UUID,uid:Annotated[UUID,Depends(user)]):
+    row=db.owned_job(uid,id)
+    job_view(row)
+    config=row.get("experimental_config")
+    if config is None:
+        return {"simulated":row["simulated"],"experimental":False,
+                "quality_status":"not_applicable" if row["simulated"] else "unverified"}
+    asset=db.owned_asset(uid,row["asset_id"]) if row["asset_id"] else None
+    provenance=asset["provenance"] if asset else {}
+    return {"simulated":False,"experimental":True,
+            **{k:config.get(k) for k in ("precision_configured","cpu_offload_configured",
+                "weights_revision","code_revision","semantic_lm","quality_status","language_evaluated")},
+            "requested_duration_seconds":row["spec"]["duration_seconds"],
+            "requested_language":row["spec"].get("language"),
+            "requested_mode":row["spec"]["mode"],
+            "technical_status":provenance.get("technical_status","not_validated"),
+            "actual_duration_seconds":provenance.get("actual_duration_seconds"),
+            "revision_verified_by_api":False,"precision_verified_by_api":False,
+            "reconciliation_required":row["reconciliation_required"] and row["status"]!="running"}
+
+
 @app.post("/v1/jobs/{id}/cancel")
-def cancel(id:UUID,uid:Annotated[UUID,Depends(user)]): return job_view(db.cancel(uid,id))
+def cancel(id:UUID,uid:Annotated[UUID,Depends(user)]):
+    job_view(db.owned_job(uid,id))
+    return job_view(db.cancel(uid,id))
 
 def asset_view(row, download=False):
-    if not row or (row["simulated"] and settings.environment=="production"):
+    if not row:
+        abort(404,"not_found","Asset not found")
+    local_real=(row.get("provenance") or {}).get("storage_backend")=="local-ace"
+    if (row["simulated"] and settings.environment=="production") or (local_real and settings.environment!="local"):
         abort(404,"not_found","Asset not found")
     expiry=int(time.time())+300
     asset_id=UUID(str(row["id"]))
-    url=local_url(asset_id,expiry,download) if row["simulated"] else SupabaseStorage().sign(row["storage_key"],download)
+    url=local_url(asset_id,expiry,download) if row["simulated"] or local_real else SupabaseStorage().sign(row["storage_key"],download)
     return {**{k:row[k] for k in ("id","kind","mime_type","duration_seconds","simulated")},"url":url,"expires_at":datetime.fromtimestamp(expiry,timezone.utc)}
 
 @app.get("/v1/assets/{id}")
@@ -179,7 +221,7 @@ def library(uid:Annotated[UUID,Depends(user)],
             limit:Annotated[int,Query(ge=1,le=100)]=30,
             cursor:UUID|None=None,project_id:UUID|None=None):
     try:
-        rows=db.music_library(uid,limit,cursor,settings.environment!="production",project_id)
+        rows=db.music_library(uid,limit,cursor,settings.environment!="production",project_id,settings.environment=="local")
     except db.ProjectNotFound:
         abort(404,"not_found","Project not found")
     except ValueError:
@@ -196,7 +238,7 @@ def media(id:UUID,expires:int,download:bool,sig:str):
     if settings.environment=="production" or not valid_signature(id,expires,download,sig):
         abort(403,"forbidden","Invalid or expired media URL")
     with db.db() as c:
-        row=c.execute("select * from synora.assets where id=%s and simulated",(id,)).fetchone()
+        row=c.execute("select * from synora.assets where id=%s and (simulated or (%s and provenance->>'storage_backend'='local-ace'))",(id,settings.environment=="local")).fetchone()
     if not row or not local_path(row["storage_key"]).is_file():
         abort(404,"not_found","Asset not found")
     return FileResponse(local_path(row["storage_key"]),media_type=row["mime_type"],filename=f"{id}.wav" if download else None)
