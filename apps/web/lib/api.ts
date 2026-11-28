@@ -1,5 +1,6 @@
 import {validateJob,validateAsset,jobPath} from "./music.mjs";
-import {validateSignedAsset,downloadPath,capabilityState} from "./media.mjs";
+import {validateSignedAsset,downloadPath} from "./media.mjs";
+import {providerStatus} from "./provider.mjs";
 import {libraryPath,parseLibraryPage} from "./library.mjs";
 export type Form={prompt:string;mode:"instrumental"|"vocals";genres:string[];moods:string[];instruments:string[];duration:number;bpm:string;lyrics:string;language:string};
 export type Spec={prompt:string;mode:"instrumental"|"vocals";genres:string[];moods:string[];instruments:string[];duration_seconds:number;bpm:number|null;lyrics:string|null;language:string|null};
@@ -21,7 +22,7 @@ export async function readJob(id:string,token:string,signal:AbortSignal,simulate
 export async function cancelJob(id:string,simulated:boolean,token:string,signal:AbortSignal):Promise<Job>{return validateJob(await request(jobPath(id,true),token,signal,{method:"POST"}),id,simulated)}
 export async function readAsset(id:string,simulated:boolean,token:string,signal:AbortSignal,download=false):Promise<Asset>{return validateSignedAsset(validateAsset(await request(download?downloadPath(id):"/v1/assets/"+encodeURIComponent(id),token,signal),simulated),id)}
 export async function readLibrary(token:string,signal:AbortSignal,cursor:string|null=null):Promise<LibraryPage>{return parseLibraryPage(await request(libraryPath(cursor),token,signal),cursor)}
-export async function readCapabilities(signal:AbortSignal):Promise<{simulated:boolean;available:boolean}>{if(!apiBase)throw new Error("API not configured.");const res=await fetch(apiBase+"/v1/music/capabilities",{signal,cache:"no-store",credentials:"omit"});if(!res.ok)throw new Error("Capabilities unavailable.");return capabilityState(await res.json())}
+export async function readCapabilities(signal:AbortSignal):Promise<ReturnType<typeof providerStatus>>{if(!apiBase)throw new Error("API not configured.");const res=await fetch(apiBase+"/v1/music/capabilities",{signal,cache:"no-store",credentials:"omit",redirect:"error",referrerPolicy:"no-referrer"});if(!res.ok)throw new Error("Capabilities unavailable.");return providerStatus(await res.json())}
 export function demoAudio():string{
  const rate=16000,n=rate*15,buf=new ArrayBuffer(44+n*2),v=new DataView(buf);
  const str=(offset:number,s:string)=>{for(let i=0;i<s.length;i++)v.setUint8(offset+i,s.charCodeAt(i))};

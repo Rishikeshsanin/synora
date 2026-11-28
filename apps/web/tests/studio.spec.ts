@@ -61,3 +61,18 @@ test("local previews never masquerade as persistent account history",async({page
  await expect(page.getByRole("button",{name:/Local preview.*Local fixture/})).toHaveCount(0);
  await expect(page.getByText("Sign in to see saved tracks.")).toBeVisible();
 });
+
+test("provider status fails closed and native-script fixture lyrics are not claimed as generated",async({page})=>{
+ await page.goto("/studio");
+ await expect(page.getByRole("button",{name:/Create (music|server fixture)/})).toBeDisabled();
+ await expect(page.getByText("GENERATION PROVIDER",{exact:true})).toBeVisible();
+ await page.getByRole("checkbox",{name:"Explicit local demo"}).check();
+ await page.getByRole("button",{name:"With vocals"}).click();
+ await page.getByLabel("Language").selectOption("Telugu");
+ const lyrics=page.getByLabel("Lyrics (optional)");await lyrics.fill("నా స్వరం");await expect(lyrics).toHaveValue("నా స్వరం");await expect(lyrics).toHaveAttribute("lang","te");
+ await expect(page.getByText(/Fixture only: lyrics and Telugu vocals are not generated/)).toBeVisible();
+ await page.getByLabel("Describe your sound").fill("Local test only");
+ await page.getByRole("button",{name:"Play local fixture"}).click();
+ await expect(page.getByText("Local fixture · Not AI-generated").first()).toBeVisible();
+ await expect(page.getByLabel("Track playback")).toBeVisible();
+});
