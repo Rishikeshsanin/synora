@@ -302,3 +302,49 @@ def test_library_two_owner_keyset_pagination(stack):
             assert response.status_code == 422
             assert response.json()["code"] == "invalid_cursor"
     assert client.get("/v1/music/library").status_code == 401
+
+
+def test_numerical_failure_and_forged_provider_never_publish(stack, monkeypatch):
+    """Controlled provider faults, real DB/worker; no actual inference or fallback."""
+    from dataclasses import replace
+    from engines.music.core import MusicError
+    db, worker, storage, client, a, b = stack
+    job = submit(client, b)
+    generate = worker.FixtureProvider.generate
+    attempts = []
+
+    def faulty(self, spec, context):
+        attempts.append(context.output_dir)
+        assert context.allow_real is False
+        assert context.budget_usd == 0
+        if len(attempts) == 1:
+            # Deliberately write partial bytes before failing to exercise cleanup.
+            (context.output_dir / "partial.wav").write_bytes(b"QA partial")
+            raise MusicError("QA injected numerical failure: NaN latents")
+        output = generate(self, spec, context)
+        if len(attempts) == 2:
+            return replace(output, provider="ace-step", simulated=False)
+        return replace(output, actual_duration_seconds=float("nan"))
+
+    monkeypatch.setattr(worker.FixtureProvider, "generate", faulty)
+    for index in range(1, 4):
+        assert worker.run_one()
+        result = state(db, job)
+        assert result["attempts"] == index
+        assert result["asset_id"] is None and result["assets"] == 0
+        assert result["status"] == ("queued" if index < 3 else "failed")
+        assert result["reservation"] == ("reserved" if index < 3 else "released")
+        assert not attempts[-1].exists()
+        assert not list(storage.settings.media_dir.glob("*/" + job + "/*.wav"))
+        assert client.get("/v1/jobs/" + job, headers=a).status_code == 404
+        if index < 3:
+            with db.db() as c:
+                c.execute("update synora.jobs set available_at=now() where id=%s", (job,))
+    assert len(attempts) == 3 and not worker.run_one()
+    response = client.get("/v1/jobs/" + job, headers=b)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "failed" and body["asset_id"] is None
+    assert body["provider"] == "fixture" and body["simulated"] is True
+    assert body["error"]["code"] == "generation_failed"
+    assert "NaN latents" not in response.text
