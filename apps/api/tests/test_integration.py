@@ -206,3 +206,245 @@ def test_reconcile_only_definitive_stale_fixture(monkeypatch):
     os.utime(committed_path,(old,old))
     assert not reconcile_attempt(committed_key)
     assert committed_path.is_file()
+
+
+def test_project_recipes_and_scoped_library(monkeypatch):
+    uid,other=uuid4(),uuid4()
+    token_a,token_b=str(uuid4()),str(uuid4())
+    monkeypatch.setattr(api,"settings",replace(settings,fixture_tokens=json.dumps({
+        token_a:str(uid),token_b:str(other)}),supabase_url="",supabase_key=""))
+    a={"Authorization":f"Bearer {token_a}"}
+    b={"Authorization":f"Bearer {token_b}"}
+    with TestClient(app) as client:
+        project_path="/v1/projects"
+        first=client.post(project_path,json={"name":"Album one"},headers=a)
+        assert first.status_code==201
+        p=first.json()["id"]
+        q=client.post(project_path,json={"name":"Album two"},headers=a).json()["id"]
+        foreign=client.post(project_path,json={"name":"Private"},headers=b).json()["id"]
+        assert client.get(project_path+"/"+p,headers=a).json()["name"]=="Album one"
+        assert client.get(project_path+"/"+p,headers=b).status_code==404
+        assert {x["id"] for x in client.get(project_path,headers=a).json()}=={p,q}
+        path="/v1/music/jobs"
+        headers=a|{"Idempotency-Key":"project-recipe"}
+        spec=SPEC|{"mode":"vocals","lyrics":"Original test lyrics","language":"Telugu","bpm":96,
+                   "genres":["ambient"],"moods":["calm"],"instruments":["piano"]}
+        assert client.post(path,params={"project_id":foreign},headers=headers,json=spec).status_code==404
+        assert client.post(path,params={"project_id":str(uuid4())},headers=headers,json=spec).status_code==404
+        res=client.post(path,params={"project_id":p},headers=headers,json=spec)
+        assert res.status_code==202,res.text
+        job=res.json()["id"]
+        assert client.post(path,params={"project_id":p},headers=headers,json=spec).json()["id"]==job
+        assert client.post(path,params={"project_id":q},headers=headers,json=spec).status_code==409
+        assert client.post(path,headers=headers,json=spec).status_code==409
+        recipe_path=f"/v1/jobs/{job}/recipe"
+        assert client.get(recipe_path,headers=a).json()=={"project_id":p,"spec":spec}
+        assert client.get(recipe_path,headers=b).status_code==404
+        assert client.get(recipe_path).status_code==401
+        assert run_one()
+        saved=client.get(recipe_path,headers=a).json()
+        assert saved["spec"]==spec
+        # Reuse is an explicit fresh submission, not a side effect of reading a recipe.
+        reuse=client.post(path,params={"project_id":saved["project_id"]},
+                          headers=a|{"Idempotency-Key":"reuse-recipe"},json=saved["spec"])
+        assert reuse.status_code==202
+        reuse_id=reuse.json()["id"]
+        assert reuse_id!=job
+        assert client.post(f"/v1/jobs/{reuse_id}/cancel",headers=a).json()["status"]=="cancelled"
+        other_job=client.post(path,params={"project_id":q},headers=a|{"Idempotency-Key":"other-project"},json=SPEC)
+        assert other_job.status_code==202
+        other_id=other_job.json()["id"]
+        client.post(f"/v1/jobs/{other_id}/cancel",headers=a)
+        library="/v1/music/library"
+        assert client.get(library,params={"project_id":foreign},headers=a).status_code==404
+        assert client.get(library,params={"project_id":p,"cursor":other_id},headers=a).status_code==422
+        page=client.get(library,params={"project_id":p,"limit":1},headers=a).json()
+        assert len(page["items"])==1 and page["next_cursor"]==reuse_id
+        assert page["items"][0]["job"]["id"]==reuse_id
+        page2=client.get(library,params={"project_id":p,"cursor":page["next_cursor"]},headers=a).json()
+        assert len(page2["items"])==1 and page2["next_cursor"] is None
+        assert page2["items"][0]["job"]["id"]==job
+        assert client.get(page2["items"][0]["asset"]["url"]).content[:4]==b"RIFF"
+        assert {x["job"]["id"] for x in client.get(library,headers=a).json()["items"]}=={job,other_id,reuse_id}
+        assert client.get(library,params={"project_id":foreign},headers=b).json()=={"items":[],"next_cursor":None}
+        with db.db() as conn:
+            row=conn.execute("select project_id from synora.jobs where id=%s",(job,)).fetchone()
+            assert str(row["project_id"])==p
+            assert conn.execute("select count(*) as n from synora.credit_reservations where job_id=%s",
+                                (job,)).fetchone()["n"]==1
+
+
+def test_legacy_idempotency_hash_is_preserved():
+    uid=uuid4()
+    legacy=db.submit(uid,"legacy-no-project",SPEC)
+    assert legacy["request_hash"]==db.canonical_hash(SPEC)
+    assert db.submit(uid,"legacy-no-project",SPEC)["id"]==legacy["id"]
+    db.cancel(uid,legacy["id"])
+
+
+def test_controlled_local_ace_worker_and_private_media(monkeypatch):
+    """Synthetic loopback transport ONLY; this is not a genuine-model quality test."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+    from urllib.parse import urlsplit
+    import io
+    import struct
+    import wave
+    from synora import local_ace, storage, worker
+    from synora.config import ACE_WEIGHTS, ACE_CODE
+
+    # The enclosing safety fixture requires disposable DB, test environment and fixture mode.
+    uid,other=uuid4(),uuid4()
+    token_a,token_b=str(uuid4()),str(uuid4())
+    tokens={token_a:str(uid),token_b:str(other)}
+    auth_a={"Authorization":"Bearer "+token_a}
+    auth_b={"Authorization":"Bearer "+token_b}
+    buffer=io.BytesIO()
+    with wave.open(buffer,"wb") as wav:
+        wav.setparams((1,2,16000,0,"NONE","not compressed"))
+        wav.writeframes(struct.pack("<hh",1000,-1000)*(16000*15//2))
+    audio=buffer.getvalue()
+    state={"submissions":0,"mode":"success","job":None}
+    local_key=str(uuid4())
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self,*args):
+            return None
+
+        def reply(self,status,body,mime="application/json"):
+            self.send_response(status)
+            self.send_header("Content-Type",mime)
+            self.send_header("Content-Length",str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def body(self,value):
+            self.reply(200,json.dumps({"code":200,"data":value}).encode())
+
+        def do_GET(self):
+            path=urlsplit(self.path).path
+            if path=="/auth/v1/user":
+                token=self.headers.get("Authorization","").removeprefix("Bearer ")
+                if token not in tokens:
+                    self.reply(401,b"{}")
+                    return
+                self.reply(200,json.dumps({"id":tokens[token],"is_anonymous":False}).encode())
+            elif path=="/v1/audio" and self.headers.get("Authorization")=="Bearer "+local_key:
+                self.reply(200,audio,"audio/wav")
+            else:
+                self.reply(404,b"{}")
+
+        def do_POST(self):
+            if self.headers.get("Authorization")!="Bearer "+local_key:
+                self.reply(401,b"{}")
+                return
+            payload=json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if self.path=="/release_task":
+                assert payload["batch_size"]==1 and payload["thinking"] is False
+                assert payload["lyrics"]=="[Instrumental]" and payload["audio_duration"]==15
+                state["submissions"]+=1
+                self.body({"task_id":f"controlled-{state['submissions']}"})
+            elif self.path=="/query_result":
+                task_id=payload["task_id_list"][0]
+                if state["mode"]=="cancel":
+                    db.cancel(uid,state["job"])
+                if state["mode"]=="fail":
+                    self.body([{"task_id":task_id,"status":2,"result":"controlled failure"}])
+                else:
+                    self.body([{"task_id":task_id,"status":1,"result":[{"dit_model":"acestep-v15-turbo",
+                        "file":"/v1/audio?path=controlled.wav","lm_model":None}]}])
+            else:
+                self.reply(404,b"{}")
+
+    server=ThreadingHTTPServer(("127.0.0.1",0),Handler)
+    thread=Thread(target=server.serve_forever,daemon=True)
+    thread.start()
+    origin=f"http://127.0.0.1:{server.server_port}"
+    try:
+        cfg=replace(settings,environment="local",provider="ace-step",supabase_url=origin,
+                    supabase_key=str(uuid4()),storage_key="",fixture_tokens="{}",
+                    public_url="http://127.0.0.1:8000",real_approved=True,ace_local_approved=True,
+                    ace_license_reviewed=True,ace_url=origin,ace_key=local_key,
+                    ace_weights_revision=ACE_WEIGHTS,ace_code_revision=ACE_CODE,
+                    ace_precision="fp32",ace_cpu_offload=True)
+        monkeypatch.setattr(api,"settings",cfg)
+        monkeypatch.setattr(worker,"settings",cfg)
+        monkeypatch.setattr(storage,"settings",cfg)
+        with TestClient(app) as client:
+            cap=client.get("/v1/music/capabilities").json()
+            assert cap["experimental"] and not cap["simulated"] and not cap["vocals"]
+            path="/v1/music/jobs"
+            assert client.post(path,json=SPEC,headers={"Idempotency-Key":"missing"}).status_code==401
+            assert client.post(path,json=SPEC|{"mode":"vocals"},headers=auth_a|{"Idempotency-Key":"vocal"}).status_code==422
+            assert client.post(path,json=SPEC|{"duration_seconds":61},headers=auth_a|{"Idempotency-Key":"duration"}).status_code==422
+            headers=auth_a|{"Idempotency-Key":"local-ace-ok"}
+            response=client.post(path,json=SPEC,headers=headers)
+            assert response.status_code==202,response.text
+            job=response.json()["id"]
+            assert response.json()["simulated"] is False
+            assert client.post(path,json=SPEC,headers=headers).json()["id"]==job
+            assert state["submissions"]==0 and db.claim() is None
+            assert worker.run_one()
+            assert state["submissions"]==1
+            result=client.get(f"/v1/jobs/{job}",headers=auth_a).json()
+            assert result["status"]=="succeeded" and result["simulated"] is False
+            info=client.get(f"/v1/jobs/{job}/generation-info",headers=auth_a).json()
+            assert info["quality_status"]=="unverified" and info["technical_status"]=="validated"
+            assert info["origin_status"]=="operator_configured_unverified"
+            assert info["precision_configured"]=="fp32" and info["precision_verified_by_api"] is False
+            assert info["actual_duration_seconds"]==15 and not info["reconciliation_required"]
+            assert "upstream_job_id" not in info and "storage_key" not in info
+            assert client.get(f"/v1/jobs/{job}/generation-info",headers=auth_b).status_code==404
+            asset=result["asset_id"]
+            meta=client.get(f"/v1/assets/{asset}",headers=auth_a).json()
+            assert meta["simulated"] is False and client.get(meta["url"]).content==audio
+            assert client.get(f"/v1/assets/{asset}",headers=auth_b).status_code==404
+            assert client.get(meta["url"]+"bad").status_code==403
+            download=client.get(f"/v1/assets/{asset}?download=true",headers=auth_a).json()
+            assert "attachment" in client.get(download["url"]).headers["content-disposition"]
+            assert client.get("/v1/music/library",headers=auth_a).json()["items"][0]["asset"]["id"]==asset
+            row=db.owned_job(uid,job)
+            assert row["upstream_job_id"]=="controlled-1" and not row["reconciliation_required"]
+            with db.db() as conn:
+                assert conn.execute("select status from synora.credit_reservations where job_id=%s",(job,)).fetchone()["status"]=="settled"
+
+            # Simulate a cancellation after upstream submission. It must not publish.
+            state["mode"]="cancel"
+            cancelled=client.post(path,json=SPEC,headers=auth_a|{"Idempotency-Key":"local-ace-cancel"}).json()["id"]
+            state["job"]=cancelled
+            assert worker.run_one()
+            row=db.owned_job(uid,cancelled)
+            assert row["status"]=="cancelled" and row["asset_id"] is None and row["reconciliation_required"]
+            assert db.claim("ace-step") is None
+            assert not list(settings.media_dir.glob("*/"+cancelled+"/*.wav"))
+            # Test-only reset of this exact synthetic task: the controlled server
+            # synchronously returned terminal status. No production reset API exists.
+            with db.db() as conn:
+                conn.execute("update synora.jobs set reconciliation_required=false where id=%s and status='cancelled'",(cancelled,))
+
+            state["mode"]="fail"
+            failed=client.post(path,json=SPEC,headers=auth_a|{"Idempotency-Key":"local-ace-fail"}).json()["id"]
+            assert worker.run_one()
+            failed_row=db.owned_job(uid,failed)
+            assert failed_row["status"]=="failed" and failed_row["attempts"]==1
+            assert failed_row["error"]["code"]=="provider_reconciliation_required"
+            assert failed_row["reconciliation_required"] and failed_row["asset_id"] is None
+            assert db.claim("ace-step") is None and state["submissions"]==3
+            assert client.post(path,json=SPEC,headers=auth_b|{"Idempotency-Key":"local-ace-blocked"}).status_code==503
+            assert not list(settings.media_dir.glob("*/"+failed+"/*.wav"))
+            # Fixture queue remains independently usable and cannot claim real jobs.
+            fixture=db.submit(other,"fixture-after-experiment",SPEC)
+            assert db.claim()["id"]==fixture["id"]
+            db.cancel(other,fixture["id"])
+            production=replace(cfg,environment="production",provider="disabled",fixture_tokens="{}")
+            monkeypatch.setattr(api,"settings",production)
+            assert client.get(f"/v1/jobs/{job}",headers=auth_a).status_code==404
+            assert client.get(f"/v1/assets/{asset}",headers=auth_a).status_code==404
+            assert client.get("/v1/music/library",headers=auth_a).json()=={"items":[],"next_cursor":None}
+            assert client.get(meta["url"]).status_code==403
+            assert client.post(path,json=SPEC,headers=auth_a|{"Idempotency-Key":"prod"}).status_code==503
+            assert local_ace.capabilities(cfg)["quality_status"]=="unverified"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
