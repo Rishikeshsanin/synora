@@ -9,7 +9,8 @@ ACE_CODE = "ca1e85fe9430179831e6bc6be790c332190a3866"
 def local_origin(value: str) -> bool:
     try:
         p = urlsplit(value)
-        return (p.scheme == "http" and p.hostname == "127.0.0.1" and p.port is not None
+        return (p.scheme == "http" and p.hostname == "127.0.0.1" and p.port is not None and 1 <= p.port <= 65535
+                and p.netloc == f"127.0.0.1:{p.port}" and value == value.strip()
                 and not p.username and not p.password and not p.query and not p.fragment
                 and p.path in ("", "/"))
     except ValueError:
@@ -65,7 +66,7 @@ class Settings:
                 raise ValueError("local ACE authorization/configuration incomplete")
             try:
                 p = urlsplit(self.database_url)
-                if p.scheme not in ("postgresql", "postgres") or p.hostname != "127.0.0.1" or p.query or p.fragment:
+                if p.scheme not in ("postgresql", "postgres") or p.hostname != "127.0.0.1" or p.query or p.fragment or p.path not in ("/synora_dev", "/synora_qa"):
                     raise ValueError()
             except ValueError:
                 raise ValueError("local ACE requires a loopback development database") from None

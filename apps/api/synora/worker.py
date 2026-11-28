@@ -72,10 +72,15 @@ def run_one():
                 delete_local(key)
     except LostLease:
         log.info("lease_lost job=%s",job)
-    except Exception:
+    except Exception as exc:
         if not lost:
             log.warning("generation_attempt_failed job=%s",job)
-            db.fail(job,token)
+            if real:
+                code=("provider_numerical_invalid" if isinstance(exc,local_ace.NumericalOutputError)
+                      else "provider_audio_invalid" if isinstance(exc,local_ace.AudioRejected) else None)
+                db.fail(job,token,code)
+            else:
+                db.fail(job,token)
     return True
 
 def main():

@@ -14,6 +14,12 @@ from engines.music.audio import MAX_AUDIO_BYTES, inspect_audio
 from .config import Settings, local_origin
 from .models import MusicSpec
 
+class AudioRejected(MusicError):
+    pass
+
+class NumericalOutputError(AudioRejected):
+    pass
+
 def options(config: Settings) -> dict:
     if config.provider != "ace-step" or config.environment != "local":
         raise MusicError("local ACE not authorized")
@@ -22,7 +28,7 @@ def options(config: Settings) -> dict:
             "weights_revision":config.ace_weights_revision,
             "code_revision":config.ace_code_revision,
             "semantic_lm":False, "experimental":True,
-            "quality_status":"unverified", "language_evaluated":None}
+            "quality_status":"unverified", "language_evaluated":None, "origin_status":"operator_configured_unverified"}
 
 def validate_request(spec: MusicSpec) -> None:
     if spec.mode != "instrumental" or spec.lyrics is not None or spec.language is not None:
@@ -31,7 +37,7 @@ def validate_request(spec: MusicSpec) -> None:
         raise MusicError("local ACE duration must be 15–60 seconds")
 
 def capabilities(config: Settings) -> dict:
-    return {"available":True, "provider":"ace-step", "model":AceStepProvider.capabilities.model,
+    return {"available":True, "availability_status":"configured_not_probed", "provider":"ace-step", "model":AceStepProvider.capabilities.model,
             "revision":config.ace_weights_revision, "simulated":False,
             "duration_control":"target", "min_duration_seconds":15, "max_duration_seconds":60,
             "supported_modes":["instrumental"], "vocals":False, "lyrics":False, "language":False,
@@ -94,18 +100,21 @@ def validate_output(output: MusicOutput, directory: Path, spec: MusicSpec, confi
     if (output.simulated or output.provider!=cap.provider or output.model!=cap.model
             or output.revision!=config.ace_weights_revision or output.mime_type!="audio/wav"
             or output.estimated_cost_usd!=0):
-        raise MusicError("unexpected local ACE identity")
+        raise AudioRejected("unexpected local ACE identity")
     path=Path(output.artifact)
     if path.is_symlink() or path.resolve().parent!=directory.resolve() or not path.is_file():
-        raise MusicError("unexpected local ACE artifact path")
+        raise AudioRejected("unexpected local ACE artifact path")
     if not 44<=path.stat().st_size<=MAX_AUDIO_BYTES:
-        raise MusicError("invalid local ACE artifact size")
-    metrics=inspect_audio(path,60)
+        raise AudioRejected("invalid local ACE artifact size")
+    try:
+        metrics=inspect_audio(path,60)
+    except MusicError:
+        raise AudioRejected("local ACE audio decoding failed") from None
     data=path.read_bytes()
     digest=hashlib.sha256(data).hexdigest()
     if (len(data)>MAX_AUDIO_BYTES or metrics["sha256"]!=digest or metrics["bytes"]!=len(data)
             or output.metrics.get("sha256")!=digest or output.metrics.get("bytes")!=len(data)):
-        raise MusicError("local ACE artifact integrity mismatch")
+        raise AudioRejected("local ACE artifact integrity mismatch")
     try:
         with wave.open(str(path),"rb") as wav:
             frames=wav.getnframes()
@@ -113,13 +122,16 @@ def validate_output(output: MusicOutput, directory: Path, spec: MusicSpec, confi
             if (wav.getsampwidth()!=2 or wav.getnchannels() not in (1,2)
                     or not 8000<=wav.getframerate()<=192000
                     or len(wav.readframes(frames))!=frames*wav.getnchannels()*2):
-                raise MusicError("local ACE requires complete PCM16 WAV")
+                raise AudioRejected("local ACE requires complete PCM16 WAV")
     except (wave.Error, EOFError, ZeroDivisionError):
-        raise MusicError("invalid local ACE WAV") from None
+        raise AudioRejected("invalid local ACE WAV") from None
     if (not math.isfinite(output.actual_duration_seconds)
-            or abs(duration-output.actual_duration_seconds)>0.05
+            or any(not isinstance(metrics[k], (int,float)) or not math.isfinite(metrics[k])
+                   for k in ("duration_seconds","peak_dbfs","mean_dbfs"))):
+        raise NumericalOutputError("local ACE nonfinite audio metadata")
+    if (abs(duration-output.actual_duration_seconds)>0.05
             or abs(duration-spec.duration_seconds)>1.0):
-        raise MusicError("local ACE duration mismatch")
+        raise AudioRejected("local ACE duration mismatch")
     provenance={**options(config),"provider":cap.provider,"model":cap.model,
                 "model_revision":config.ace_weights_revision,"simulated":False,
                 "storage_backend":"local-ace","cost_units":0,"estimated_cost_usd":0,

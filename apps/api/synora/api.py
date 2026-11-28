@@ -142,7 +142,7 @@ def capabilities():
 def submit(spec:MusicSpec,uid:Annotated[UUID,Depends(user)],key:Annotated[str,Header(alias="Idempotency-Key",min_length=1,max_length=128)],project_id:UUID|None=None):
     if not key.strip():
         abort(422,"invalid_request","Idempotency key required")
-    if settings.provider!="fixture":
+    if settings.provider not in ("fixture","ace-step"):
         abort(503,"provider_disabled","No approved provider")
     try:
         to_engine_spec(spec)
@@ -186,13 +186,14 @@ def generation_info(id:UUID,uid:Annotated[UUID,Depends(user)]):
     provenance=asset["provenance"] if asset else {}
     return {"simulated":False,"experimental":True,
             **{k:config.get(k) for k in ("precision_configured","cpu_offload_configured",
-                "weights_revision","code_revision","semantic_lm","quality_status","language_evaluated")},
+                "weights_revision","code_revision","semantic_lm","quality_status","language_evaluated","origin_status")},
             "requested_duration_seconds":row["spec"]["duration_seconds"],
             "requested_language":row["spec"].get("language"),
             "requested_mode":row["spec"]["mode"],
             "technical_status":provenance.get("technical_status","not_validated"),
             "actual_duration_seconds":provenance.get("actual_duration_seconds"),
             "revision_verified_by_api":False,"precision_verified_by_api":False,
+            "failure_code":row["error"].get("code") if row["error"] else None,
             "reconciliation_required":row["reconciliation_required"] and row["status"]!="running"}
 
 

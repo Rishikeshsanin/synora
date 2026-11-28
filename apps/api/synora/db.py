@@ -47,6 +47,9 @@ def submit(user, key, spec, project_id=None, experimental_config=None):
             c.execute("select pg_advisory_xact_lock(72501006)")
             if c.execute("select 1 from synora.jobs where provider='ace-step' and reconciliation_required and status<>'running' limit 1").fetchone():
                 raise ReconciliationRequired()
+            active=c.execute("select count(*) as n from synora.jobs where provider='ace-step' and status in ('queued','running')").fetchone()
+            if active["n"]>=2:
+                raise RateLimited()
         counts = c.execute("""select count(*) filter (where created_at > now()-interval '1 minute') as recent,
             count(*) filter (where status in ('queued','running')) as active
             from synora.jobs where user_id=%s""", (user,)).fetchone()
@@ -139,13 +142,19 @@ def complete(job, token, key, duration, provenance, mime_type='audio/wav'):
         c.execute("update synora.credit_reservations set status='settled',updated_at=now() where job_id=%s and status='reserved'", (job,))
         return True
 
-def fail(job, token):
+def fail(job, token, real_failure=None):
+    errors={
+        "provider_audio_invalid":{"code":"provider_audio_invalid","message":"Experimental audio failed technical validation"},
+        "provider_numerical_invalid":{"code":"provider_numerical_invalid","message":"Experimental audio contained nonfinite metadata"},
+    }
+    real_error=errors.get(real_failure,{"code":"provider_reconciliation_required",
+                                      "message":"Experimental generation needs operator reconciliation"})
     with db() as c:
         row = c.execute("""update synora.jobs set status=case when provider='ace-step' or attempts>=3 then 'failed' else 'queued' end,
-            error=case when provider='ace-step' then '{"code":"provider_reconciliation_required","message":"Experimental generation needs operator reconciliation"}'::jsonb
+            error=case when provider='ace-step' then %s::jsonb
             when attempts>=3 then '{"code":"generation_failed","message":"Generation failed"}'::jsonb else null end,
             lease_token=null,lease_until=null,available_at=now()+attempts*interval '5 seconds',updated_at=now()
-            where id=%s and lease_token=%s and status='running' and lease_until>now() returning status""",(job,token)).fetchone()
+            where id=%s and lease_token=%s and status='running' and lease_until>now() returning status""",(Jsonb(real_error),job,token)).fetchone()
         if row and row["status"]=="failed":
             c.execute("update synora.credit_reservations set status='released',updated_at=now() where job_id=%s and status='reserved'",(job,))
 
