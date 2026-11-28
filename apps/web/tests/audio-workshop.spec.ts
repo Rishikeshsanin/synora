@@ -16,12 +16,12 @@ test("local WAV clip renders, plays and downloads exact trimmed frames",async({p
  const event=page.waitForEvent("download");await page.getByRole("link",{name:"Download WAV clip"}).click();const download=await event;expect(await download.failure()).toBeNull();const path=await download.path();expect(path).toBeTruthy();const bytes=await readFile(path!);expect(bytes.toString("ascii",0,4)).toBe("RIFF");expect(bytes.readUInt32LE(40)).toBe(8000);expect(bytes.readInt16LE(44)).toBe(0);expect(bytes.readInt16LE(44+4000)).toBe(10000);expect(bytes.readInt16LE(bytes.length-2)).toBe(0);
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
  await page.screenshot({path:testInfo.outputPath("audio-workshop-mobile.png"),fullPage:true});
- await page.getByLabel("Clip start (seconds)").fill("0.9");await expect(page.getByRole("link",{name:"Download WAV clip"})).toHaveCount(0);await page.getByRole("button",{name:"Render local clip"}).click();await expect(page.getByRole("alert")).toContainText("valid clip range");
+ await page.getByLabel("Clip start (seconds)").fill("0.9");await expect(page.getByRole("link",{name:"Download WAV clip"})).toHaveCount(0);await page.getByRole("button",{name:"Render local clip"}).click();await expect(page.getByRole("main").getByRole("alert")).toContainText("valid clip range");
  await page.getByRole("button",{name:"Music Studio"}).click();await page.getByRole("button",{name:"Audio Workshop"}).click();await expect(page.getByRole("button",{name:"Render local clip"})).toHaveCount(0);
 });
 test("rejects corrupt audio without exposing playback",async({page})=>{
  await page.goto("/studio");await page.getByRole("button",{name:"Audio Workshop"}).click();
  await page.getByLabel("Import PCM WAV").setInputFiles({name:"invalid.wav",mimeType:"audio/wav",buffer:Buffer.alloc(64)});
- await expect(page.getByRole("alert")).toContainText("Invalid or truncated");
+ await expect(page.getByRole("main").getByRole("alert")).toContainText("Invalid or truncated");
  await expect(page.getByLabel("Clip playback")).toHaveCount(0);
 });
