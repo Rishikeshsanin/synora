@@ -16,7 +16,7 @@ import stat
 import subprocess
 import sys
 import time
-from tempfile import TemporaryDirectory
+from tempfile import TemporaryFile
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE = json.loads((ROOT / "infrastructure/gpu/profile.json").read_text())
@@ -88,12 +88,15 @@ def offline_env(source, workspace, gpu_index="0"):
 def capture(args, env, cwd, timeout=30):
     # Never echo subprocess stdout/stderr, command arguments or environment.
     try:
-        result = subprocess.run(args, cwd=cwd, env=env, stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, text=True, timeout=timeout, check=True)
-    except (OSError, subprocess.SubprocessError):
+        # Keep potentially large stdout out of RAM and never persist inspection logs.
+        with TemporaryFile(dir=cwd) as output:
+            subprocess.run(args, cwd=cwd, env=env, stdout=output,
+                           stderr=subprocess.DEVNULL, timeout=timeout, check=True)
+            require(output.tell() <= MAX_JSON, "Inspection output exceeds bound")
+            output.seek(0)
+            return output.read(MAX_JSON + 1).decode("utf-8").strip()
+    except (OSError, subprocess.SubprocessError, UnicodeError):
         raise Blocked("Required local inspection command failed") from None
-    require(len(result.stdout) <= MAX_JSON, "Inspection output exceeds bound")
-    return result.stdout.strip()
 
 
 def inspect_source(source, snapshot, workspace, env):
@@ -110,8 +113,8 @@ def inspect_source(source, snapshot, workspace, env):
             "Keep source, upstream cache and private output separate")
     require(capture(["git", "-C", str(source), "rev-parse", "HEAD"], env, workspace)
             == PROFILE["code_revision"], "ACE source revision mismatch")
-    require(not capture(["git", "-C", str(source), "status", "--porcelain", "--untracked-files=no"],
-                        env, workspace), "Tracked ACE source modified")
+    require(not capture(["git", "-C", str(source), "status", "--porcelain", "--untracked-files=normal"],
+                        env, workspace), "ACE source checkout is not clean")
     files = {}
     for path in sorted(snapshot.rglob("*")):
         require(not path.is_symlink() or (path.resolve().is_file() and path.resolve().is_relative_to(cache / "blobs")),
@@ -139,13 +142,19 @@ def normalize(name):
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
-def inventory(python, env, workspace):
+def inventory(python, source, env, workspace):
     require(python.is_absolute() and python.is_file(), "Specify the upstream environment Python")
-    script = """import importlib.metadata as m,json,sys
-print(json.dumps({"python":list(sys.version_info[:2]),"packages":[{"name":d.metadata["Name"],"version":d.version,"license":d.metadata.get("License-Expression") or d.metadata.get("License") or "UNKNOWN"} for d in m.distributions()]}))
+    script = """import importlib.metadata as m,importlib.util,json,sys
+spec=importlib.util.find_spec("acestep")
+print(json.dumps({"python":list(sys.version_info[:2]),"prefix":sys.prefix,"base_prefix":sys.base_prefix,"ace_origin":spec.origin if spec else None,"packages":[{"name":d.metadata["Name"],"version":d.version,"license":d.metadata.get("License-Expression") or d.metadata.get("License") or "UNKNOWN"} for d in m.distributions()]}))
 """
     data = json.loads(capture([str(python), "-I", "-c", script], env, workspace))
-    require(data["python"] == [3, 12], "Separate upstream Python 3.12 environment required")
+    require(data["python"] == [3, 12] and data["prefix"] != data["base_prefix"],
+            "Separate upstream Python 3.12 virtual environment required")
+    prefix = Path(data["prefix"]).resolve()
+    require(prefix.is_relative_to(source) and not prefix.is_relative_to(ROOT)
+            and data["ace_origin"] and Path(data["ace_origin"]).resolve().is_relative_to(source / "acestep"),
+            "Installed ACE must import from the pinned checkout, not an unrelated wheel")
     entries = {}
     for item in data["packages"]:
         name = normalize(item["name"])
@@ -168,7 +177,7 @@ def verify_audit(audit, installed, reviewed_local):
         if dep.get("skip_reason"):
             # Local pinned source packages are not PyPI distributions. They still
             # need explicit human review; no skip allowed for registry dependencies.
-            require(name in {"ace-step", "nano-vllm"} and name in reviewed_local
+            require(not dep.get("vulns") and name in {"ace-step", "nano-vllm"} and name in reviewed_local
                     and reviewed_local[name] == installed[name]["version"],
                     "Unaudited package in upstream environment")
         else:
@@ -181,6 +190,7 @@ def verify_audit(audit, installed, reviewed_local):
 
 
 def verify_review(review, audit_file, digest, source_info, installed):
+    audit_data = read_json(audit_file)
     require(review.get("research_only") is True and review.get("commercial_release_approved") is False
             and review.get("reviewed") is True and review.get("inventory_sha256") == digest
             and review.get("audit_sha256") == sha(audit_file), "Missing or stale explicit research review")
@@ -196,7 +206,26 @@ def verify_review(review, audit_file, digest, source_info, installed):
     local = review.get("reviewed_local_packages", {})
     require(isinstance(local, dict) and set(local) <= {"ace-step", "nano-vllm"},
             "Unexpected local-package audit exemption")
-    return verify_audit(read_json(audit_file), installed, local)
+    return verify_audit(audit_data, installed, local)
+
+
+def save_inventory(workspace, installed):
+    """Reuse an identical private inventory; refuse stale or unsafe existing files."""
+    target = workspace / "inventory.json"
+    try:
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    except FileExistsError:
+        require(read_json(private_file(target, workspace)) == installed,
+                "Installed inventory changed; use a new reviewed workspace")
+        return
+    with os.fdopen(fd, "w") as stream:
+        json.dump(installed, stream, indent=2)
+
+
+def memory_gate(total, free, available):
+    require(total >= PROFILE["min_gpu_total_mib"] and free >= PROFILE["min_gpu_free_mib"],
+            "Insufficient GPU headroom; never use MX330 2 GB for this profile")
+    require(available >= PROFILE["min_host_available_mib"], "Insufficient host RAM for offload")
 
 
 def hardware(env, workspace, gpu_index):
@@ -211,9 +240,7 @@ def hardware(env, workspace, gpu_index):
                          if line.startswith("MemAvailable:"))
     except (ValueError, StopIteration, OSError):
         raise Blocked("Unable to inspect host memory") from None
-    require(total >= PROFILE["min_gpu_total_mib"] and free >= PROFILE["min_gpu_free_mib"],
-            "Insufficient GPU headroom; never use MX330 2 GB for this profile")
-    require(available >= PROFILE["min_host_available_mib"], "Insufficient host RAM for offload")
+    memory_gate(total, free, available)
     require(shutil.disk_usage(workspace).free // 1024**2 >= PROFILE["min_workspace_free_mib"],
             "Insufficient private workspace disk")
     return {"gpu_total_mib": total, "gpu_free_mib": free, "host_available_mib": available,
@@ -293,14 +320,12 @@ def main():
                 "Explicit authorized host and external offline isolation confirmation required")
         env = offline_env(os.environ, workspace, args.gpu_index)
         source_info = inspect_source(args.ace_source, args.snapshot, workspace, env)
-        installed, digest = inventory(args.python, env, workspace)
+        installed, digest = inventory(args.python, args.ace_source, env, workspace)
         report = dict(source_info, inventory_sha256=digest, packages=len(installed),
                       generation_executed=False, commercial_release_approved=False,
                       ready_for_reviewed_benchmark=False, profile_generation_enabled=False)
         # Write private inventory for external license review; no raw license text or paths in console.
-        target = workspace / "inventory.json"
-        with os.fdopen(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as stream:
-            json.dump(installed, stream, indent=2)
+        save_inventory(workspace, installed)
         if args.audit is None or args.review is None:
             report["blocker"] = "Separate environment audit and reviewed license dispositions required"
             print(json.dumps(report, indent=2))
@@ -308,6 +333,11 @@ def main():
         audit = private_file(args.audit, workspace)
         review = private_file(args.review, workspace)
         report.update(verify_review(read_json(review), audit, digest, source_info, installed))
+        # uv pip check reads the existing upstream environment; never sync/install.
+        capture(["uv", "--offline", "pip", "check", "--python", str(args.python)],
+                env, workspace, timeout=60)
+        report["upstream_dependency_consistency"] = "passed"
+        report["source_license_reviewed"] = True
         report.update(hardware(env, workspace, args.gpu_index))
         report["ready_for_reviewed_benchmark"] = True
         print(json.dumps(report, indent=2))

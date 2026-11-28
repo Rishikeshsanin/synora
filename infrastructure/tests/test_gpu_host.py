@@ -4,9 +4,10 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from infrastructure.gpu_host import (Blocked, offline_env, private_dir, run_bounded,
-                                     session_lease, verify_audit)
+                                     session_lease, verify_audit, save_inventory, memory_gate, inventory)
 
 
 @unittest.skipUnless(os.name == "posix", "POSIX research host required")
@@ -70,3 +71,42 @@ class GPUHostTests(unittest.TestCase):
             with self.assertRaises(Blocked):
                 run_bounded([sys.executable, "-c", "raise SystemExit(3)"], env, root, 3)
             self.assertFalse((root / "session.lock").exists())
+
+    def test_private_inventory_reuse_and_change_rejection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            installed = {"torch": {"version": "2.10.0", "license": "BSD"}}
+            save_inventory(root, installed)
+            save_inventory(root, installed)
+            self.assertEqual(json.loads((root / "inventory.json").read_text()), installed)
+            with self.assertRaises(Blocked):
+                save_inventory(root, {"torch": {"version": "2.11.0"}})
+            (root / "inventory.json").chmod(0o644)
+            with self.assertRaises(Blocked):
+                save_inventory(root, installed)
+
+    def test_conservative_hardware_policy(self):
+        memory_gate(15360, 12000, 15000)
+        for total, free, available in ((2048, 2048, 16000), (15360, 9000, 16000),
+                                       (15360, 12000, 8000)):
+            with self.assertRaises(Blocked):
+                memory_gate(total, free, available)
+
+    def test_inventory_requires_pinned_checkout_and_virtualenv(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "ace"
+            python = root / "python"
+            python.touch()
+            base = {"python": [3, 12], "prefix": str(source / ".venv"), "base_prefix": "/usr",
+                    "ace_origin": str(source / "acestep/__init__.py"),
+                    "packages": [{"name": "torch", "version": "2.10.0", "license": "BSD"},
+                                 {"name": "ace-step", "version": "1.5.0", "license": "MIT"}]}
+            with patch("infrastructure.gpu_host.capture", return_value=json.dumps(base)):
+                entries, digest = inventory(python, source, {}, root)
+                self.assertEqual(len(entries), 2)
+                self.assertEqual(len(digest), 64)
+            for bad in (dict(base, prefix="/usr"), dict(base, ace_origin="/other/acestep/__init__.py")):
+                with patch("infrastructure.gpu_host.capture", return_value=json.dumps(bad)):
+                    with self.assertRaises(Blocked):
+                        inventory(python, source, {}, root)

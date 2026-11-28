@@ -43,12 +43,13 @@ python -m infrastructure.gpu_host --workspace /private/new-session \
   --authorized-local-gpu --offline-host-confirmed
 ```
 First pass emits only source/license/lock/inventory hashes and writes owner-private inventory.json;
-exits 2 pending review. For a second pass use a fresh private workspace and copy reviewed audit
-and review JSON into it with mode 0600. The current exclusive inventory creation intentionally
-refuses overwrites. Never put credentials, raw prompts, user media or environment dumps in CI.
+exits 2 pending review. For a second pass place reviewed audit and review JSON in the same private workspace with
+mode 0600. An identical private inventory may be reused; changed inventory is rejected and
+requires a new review/workspace. The tool requires an editable import from the exact pinned
+checkout and its isolated virtual environment (default uv sync behavior), not a similarly named wheel. Never put credentials, raw prompts, user media or environment dumps in CI.
 
-Perform the upstream environment dependency consistency check separately (e.g. uv pip check
---python /private/ace-pinned/.venv/bin/python). Use an independently audited pip-audit environment
+The reviewed pass additionally executes uv --offline pip check --python against the target
+virtual environment; this reads installed metadata without syncing or installing packages. Use an independently audited pip-audit environment
 to inspect the exact upstream site-packages via --path and --format json; authorize advisory
 network access only for this explicit audit phase, before offline inference. Do not install
 auditors into the app or change upstream lock silently. Match all installed package names and
@@ -73,6 +74,9 @@ yet. Warm reuse within one handler is Agent 3's responsibility, never retain a s
 session exit. Host-enforced cgroup limits/VRAM and storage quota remain separate owner setup,
 and escaped subprocesses require host isolation; never present these soft bounds as hard caps.
 
-CI executes stdlib-only tests of path isolation, audit completeness, session exclusivity and
+CI executes stdlib-only tests of path isolation, audit completeness, inventory consistency,
+conservative memory thresholds, pinned editable source import, session exclusivity and
 actual disposable child-process timeout/cleanup; no model imports, weights, GPU requests or
 upstream network checks. All existing application gates remain unchanged.
+
+First commit 720b046: actual CI 46144273325 foundation 17/17, including four new non-GPU tests and real subprocess timeout. Follow-up adds strict installed source/venv consistency, offline uv dependency consistency check, safe identical inventory reuse and three additional tests. No GPU used.
