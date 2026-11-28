@@ -8,10 +8,41 @@ import os
 import subprocess
 import tempfile
 import wave
+from importlib import import_module
 from pathlib import Path
+from types import TracebackType
+from typing import Protocol, cast
 
 import numpy as np
-import soundfile as sf
+from numpy.typing import NDArray
+
+
+class _SoundFile(Protocol):
+    samplerate: int
+    channels: int
+    frames: int
+    format: str
+    subtype: str
+
+    def __enter__(self) -> '_SoundFile':
+        ...
+    def __exit__(self, exc_type: type[BaseException] | None,
+                 exc_value: BaseException | None, traceback: TracebackType | None) -> bool | None:
+        ...
+    def seek(self, frames: int) -> int:
+        ...
+    def read(self, frames: int, *, dtype: str, always_2d: bool) -> NDArray[np.float64]:
+        ...
+
+
+class _SoundFileModule(Protocol):
+    def SoundFile(self, file: io.BytesIO) -> _SoundFile:
+        ...
+
+
+# Audited SoundFile currently ships no py.typed marker. Model only the
+# narrow API used here; keep strict mypy checks on our own code.
+sf = cast(_SoundFileModule, import_module('soundfile'))
 
 MAX_SOURCE = 48 * 1024 * 1024
 KINDS = ('synthetic-fixture', 'user-supplied', 'generated-unverified')
@@ -55,11 +86,11 @@ def _pcm(samples, rate):
     return out.getvalue()
 
 
-def measure(wav):
+def measure(wav: bytes | Path) -> dict[str, float]:
     is_bytes = isinstance(wav, bytes)
     run = subprocess.run(['ffmpeg', '-nostdin', '-hide_banner', '-i', 'pipe:0' if is_bytes else str(wav), '-af',
                           'loudnorm=I=-16:TP=-2:LRA=11:print_format=json', '-f', 'null', '-'],
-                         input=wav if is_bytes else None, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                         input=wav if isinstance(wav, bytes) else None, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                          check=True, timeout=30)
     log = run.stderr.decode('utf-8', errors='replace')
     report = json.loads(log[log.rfind('{'):log.rfind('}')+1])
@@ -69,7 +100,8 @@ def measure(wav):
     return dict(lufs=loudness, dbtp=peak)
 
 
-def prepare(path, provenance, rights, start_frame, frame_count):
+def prepare(path: str | Path, provenance: dict[str, str], rights: dict[str, bool],
+            start_frame: int, frame_count: int) -> tuple[bytes, dict]:
     """Return a PCM16 preview and receipt; no model inference or automatic approval."""
     _review(provenance, rights)
     source = _read(path)
