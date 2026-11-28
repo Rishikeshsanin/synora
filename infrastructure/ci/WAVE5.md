@@ -32,3 +32,6 @@ Resource envelope: database 512 MiB/1 CPU, API 512 MiB/1 CPU, worker 768 MiB/1.5
 bounded /tmp. Actual CPU/RAM consumption is not benchmarked by these caps; no GPU is required.
 Build memory is not constrained by these runtime limits. MX330 2 GB VRAM is not used.
 Existing green locks unchanged. No release approval or cloud activation.
+
+## Runtime correction
+Run 46069519057/job 140742833318: all other nine jobs passed, original canonical container acceptance passed, new stack built and PG/API reached healthy, but Docker Compose --wait exited because worker had disabled healthcheck. Scoped cleanup removed all three containers, both volumes, network and unique tag. New real worker readiness probe checks private media path write/search permission and actual DB queue schema query with bounded timeouts; the worker container must be healthy both before and after the unchanged strict live suite. Process/queue readiness is not proof of generation; the existing live HTTP test must actually complete a job and verify signed WAV playback. No resource limits or dependencies altered. Two new regression checks prevent a disabled probe or accepting an unhealthy running worker.

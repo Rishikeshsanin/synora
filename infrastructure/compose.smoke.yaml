@@ -66,7 +66,12 @@ services:
     <<: *runtime
     command: ["python", "-m", "synora.worker"]
     healthcheck:
-      disable: true
+      # The init process exits with the worker; check actual queue schema access
+      # and write permission on the private shared volume, not a fake HTTP port.
+      test: ["CMD", "python", "-c", "import os, pathlib, psycopg; p=pathlib.Path(os.environ['MEDIA_DIR']); assert p.is_dir() and os.access(p, os.W_OK|os.X_OK); c=psycopg.connect(os.environ['DATABASE_URL'],connect_timeout=3,options='-c statement_timeout=2000'); c.execute('select 1 from synora.jobs limit 0'); c.close()"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
     mem_limit: 768m
     cpus: 1.5
 volumes:

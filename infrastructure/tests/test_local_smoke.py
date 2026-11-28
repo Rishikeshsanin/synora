@@ -1,7 +1,10 @@
 import argparse
 import json
 import unittest
-from infrastructure.local_smoke import clean_env, fixture_env, local_endpoint, port_value
+from pathlib import Path
+from unittest.mock import patch
+from types import SimpleNamespace
+from infrastructure.local_smoke import clean_env, fixture_env, local_endpoint, port_value, verify_runtime
 
 
 class LocalSmokeTests(unittest.TestCase):
@@ -31,3 +34,26 @@ class LocalSmokeTests(unittest.TestCase):
         for value in ("0", "65536", "abc", "127.0.0.1:8000"):
             with self.assertRaises(argparse.ArgumentTypeError):
                 port_value(value)
+
+    def test_worker_probe_is_not_disabled(self):
+        compose = (Path(__file__).resolve().parents[1] / "compose.smoke.yaml").read_text()
+        worker = compose.split("  worker:\n", 1)[1]
+        self.assertNotIn("disable: true", worker)
+        self.assertIn("select 1 from synora.jobs limit 0", worker)
+        self.assertIn("os.access(p, os.W_OK|os.X_OK)", worker)
+        self.assertIn("connect_timeout=3", worker)
+
+    def test_runtime_rejects_unhealthy_worker_even_if_running(self):
+        def fake_call(args, env, **kwargs):
+            if args[-3:-1] == ["ps", "-q"]:
+                return SimpleNamespace(stdout=args[-1])
+            service = args[-1]
+            limit = (512 if service == "api" else 768) * 1024**2
+            info = {"State": {"Running": True, "Health": {"Status": "healthy" if service == "api" else "unhealthy"}},
+                    "Config": {"User": "10001:10001"},
+                    "HostConfig": {"ReadonlyRootfs": True, "Memory": limit, "Privileged": False,
+                                   "CapDrop": ["ALL"], "PidsLimit": 128, "NanoCpus": 1000000000}}
+            return SimpleNamespace(stdout=json.dumps([info]))
+        with patch("infrastructure.local_smoke.call", side_effect=fake_call):
+            with self.assertRaisesRegex(ValueError, "policy failed: worker"):
+                verify_runtime(["docker"], ["docker", "compose"], {})

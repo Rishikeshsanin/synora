@@ -83,13 +83,14 @@ def verify_runtime(docker, compose, env):
         # Inspect only in memory; never print full container config or environment.
         info = json.loads(call(docker + ["inspect", cid], env, capture=True).stdout)[0]
         config, host = info["Config"], info["HostConfig"]
-        if (not info["State"]["Running"] or config["User"] != "10001:10001"
+        if (not info["State"]["Running"] or info["State"].get("Health", {}).get("Status") != "healthy"
+                or config["User"] != "10001:10001"
                 or not host["ReadonlyRootfs"] or host["Memory"] != limit
                 or host.get("DeviceRequests") or host.get("Devices")
                 or host["Privileged"] or "ALL" not in host["CapDrop"]
                 or host["PidsLimit"] != 128 or host["NanoCpus"] <= 0):
             raise ValueError("Runtime resource/security policy failed: " + service)
-    print("Verified non-root, read-only, CPU/memory/pid-limited API and worker; no GPU devices", flush=True)
+    print("Verified healthy non-root, read-only, CPU/memory/pid-limited API and worker; no GPU devices", flush=True)
 
 
 def run(port):
