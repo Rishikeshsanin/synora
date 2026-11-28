@@ -11,3 +11,6 @@
 
 /* Audio Workshop — bounded offline clip editing. */
 .workshop{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,.8fr);gap:20px;align-items:start}.workshop-fields{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}.workshop-source{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px;margin:16px 0 4px;border:1px solid var(--line);border-radius:9px;background:var(--input)}.workshop-source>div{min-width:0;overflow-wrap:anywhere}.workshop-note{margin-top:8px}.workshop input[type=file]{overflow:hidden}.workshop input::file-selector-button{padding:7px 10px;margin-right:8px;border:1px solid var(--line);border-radius:5px;background:var(--hover);color:inherit;font:inherit;cursor:pointer}@media(max-width:1050px){.workshop{grid-template-columns:1fr}}@media(max-width:360px){.workshop-fields{grid-template-columns:1fr}}
+
+/* Wave 6 provider status and multilingual lyrics: responsive, no new assets. */
+.provider-status{display:grid;gap:8px;padding:12px;margin:12px 0;border:1px solid var(--line);border-radius:9px;background:var(--input);overflow-wrap:anywhere}.provider-status .button{justify-self:start}.provider-status strong{font-size:.9rem}#lyrics{line-height:1.65;resize:vertical}
